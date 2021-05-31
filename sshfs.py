@@ -7,12 +7,12 @@ import secrets
 import shlex
 import stat
 import weakref
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import datetime
 
 import asyncssh
 from asyncssh import ProcessError
-from asyncssh.misc import PermissionDenied
+from asyncssh.misc import ChannelOpenError, PermissionDenied
 from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile, SFTPOpUnsupported
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 from fsspec.spec import AbstractBufferedFile
@@ -55,6 +55,79 @@ def wrap_exceptions(func):
     return wrapper
 
 
+_MAX_TIMEOUT = 60 * 60 * 3
+
+
+class SFTPChannelPool:
+    def __init__(
+        self,
+        client,
+        *,
+        max_channels=None,
+        timeout=_MAX_TIMEOUT,
+        unsafe_terminate=True,
+    ):
+        self.client = client
+
+        # Queue size management will be handled by the class
+        self._queue = asyncio.Queue(0)
+        self._stack = AsyncExitStack()
+
+        # This limit might change during the execution to reflect
+        # better to the server's capacity to prevent getting too
+        # many errors and wasting time on creating failed channels.
+        self.max_channels = max_channels
+        self.active_channels = 0
+
+        # When there are no channels available, this is the maximum amount
+        # of time that the SFTPChannelPool will wait to retrieve the
+        # channel. If nothing gets released within this parameter, then
+        # a TimeoutError will be raised. It can be None.
+        self.timeout = timeout
+
+        # When the pool is closing, whether to terminate all open
+        # connections or raise an error to indicate there are leaks.
+        self.unsafe_terminate = unsafe_terminate
+
+    async def new_channel(self):
+        return await self._stack.enter_async_context(
+            self.client.start_sftp_client()
+        )
+
+    @asynccontextmanager
+    async def get(self):
+        if self._queue.empty():
+            # If there is no hard limit or the limit is not hit yet
+            # try to create a new channel
+            if (
+                self.max_channels is None
+                or self.active_channels < self.max_channels
+            ):
+                try:
+                    self._queue.put_nowait(await self.new_channel())
+                except ChannelOpenError:
+                    # If we can't create any more channels, then change
+                    # the hard limit to reflect that so that we don't hit
+                    # these errors again.
+                    self.max_channels = self.active_channels
+
+        channel = await asyncio.wait_for(
+            self._queue.get(), timeout=self.timeout
+        )
+        self.active_channels += 1
+        yield channel
+        self.active_channels -= 1
+        self._queue.put_nowait(channel)
+
+    async def close(self):
+        if self.active_channels and not self.unsafe_terminate:
+            raise RuntimeError(
+                f"{type(self).__name__!r} can't be closed while there are active channels"
+            )
+
+        await self._stack.aclose()
+
+
 class SSHFileSystem(AsyncFileSystem):
     def __init__(
         self,
@@ -65,6 +138,8 @@ class SSHFileSystem(AsyncFileSystem):
         password=_UNSET,
         client_keys=_UNSET,
         known_hosts=_UNSET,
+        max_sftp_channels=_UNSET,
+        max_sftp_channel_wait_timeout=_UNSET,
         **kwargs,
     ):
         super().__init__(self, **kwargs)
@@ -79,19 +154,31 @@ class SSHFileSystem(AsyncFileSystem):
                 "known_hosts": known_hosts,
             }
         )
+        self._pool_args = _drop_unset(
+            {
+                "max_channels": max_sftp_channels,
+                "timeout": max_sftp_channel_wait_timeout,
+            }
+        )
 
         self._stack = AsyncExitStack()
-        self._client = self.connect()
-        weakref.finalize(self, sync, self.loop, self._finalize, self._stack)
+        self._client, self._pool = self.connect()
+        weakref.finalize(
+            self, sync, self.loop, self._finalize, self._pool, self._stack
+        )
 
     @wrap_exceptions
     async def _connect(self):
-        client = asyncssh.connect(**self._client_args)
-        return await self._stack.enter_async_context(client)
+        _raw_client = asyncssh.connect(**self._client_args)
+        client = await self._stack.enter_async_context(_raw_client)
+        pool = SFTPChannelPool(client, **self._pool_args)
+        return client, pool
 
     connect = sync_wrapper(_connect)
 
-    async def _finalize(self, stack):
+    async def _finalize(self, pool, stack):
+        await pool.close()
+
         # If an error occurs while the SSHFile is trying to
         # open the native file, then the client might get broken
         # due to partial initalization. We are just going to ignore
@@ -126,8 +213,8 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _info(self, path, **kwargs):
-        async with self.client.start_sftp_client() as sftp:
-            attributes = await sftp.stat(path)
+        async with self._pool.get() as channel:
+            attributes = await channel.stat(path)
 
         info = self._decode_attributes(attributes)
         info["name"] = path
@@ -135,19 +222,19 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _mv(self, lpath, rpath, **kwargs):
-        async with self.client.start_sftp_client() as sftp:
-            try:
-                await sftp.posix_rename(lpath, rpath)
-            except SFTPOpUnsupported:
-                # Some systems doesn't natively support posix_rename
-                # which is an extension to the original SFTP protocol.
-                # In that case we are going to copy the file and delete
-                # it.
+        async with self._pool.get() as channel:
+            with suppress(SFTPOpUnsupported):
+                return await channel.posix_rename(lpath, rpath)
 
-                try:
-                    await self._cp_file(lpath, rpath)
-                finally:
-                    await self._rm_file(lpath)
+        # Some systems doesn't natively support posix_rename
+        # which is an extension to the original SFTP protocol.
+        # In that case we are going to copy the file and delete
+        # it.
+
+        try:
+            await self._cp_file(lpath, rpath)
+        finally:
+            await self._rm_file(lpath)
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
@@ -156,8 +243,8 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _ls(self, path, detail=False, **kwargs):
-        async with self.client.start_sftp_client() as sftp:
-            file_attrs = await sftp.readdir(path)
+        async with self._pool.get() as channel:
+            file_attrs = await channel.readdir(path)
 
         infos = []
         for file_attr in file_attrs:
@@ -181,28 +268,28 @@ class SSHFileSystem(AsyncFileSystem):
             return await self._makedirs(path, exist_ok=True)
 
         attrs = asyncssh.SFTPAttrs(permissions=permissions)
-        async with self.client.start_sftp_client() as sftp:
-            await sftp.mkdir(path)
+        async with self._pool.get() as channel:
+            await channel.mkdir(path)
 
     @wrap_exceptions
     async def _makedirs(
         self, path, *, exist_ok=False, permissions=511, **kwargs
     ):
         attrs = asyncssh.SFTPAttrs(permissions=permissions)
-        async with self.client.start_sftp_client() as sftp:
-            await sftp.makedirs(path, exist_ok=exist_ok, attrs=attrs)
+        async with self._pool.get() as channel:
+            await channel.makedirs(path, exist_ok=exist_ok, attrs=attrs)
 
     makedirs = sync_wrapper(_makedirs)
 
     @wrap_exceptions
     async def _rm_file(self, path, **kwargs):
-        async with self.client.start_sftp_client() as sftp:
-            await sftp.unlink(path)
+        async with self._pool.get() as channel:
+            await channel.unlink(path)
 
     @wrap_exceptions
     async def _rmdir(self, path, **kwargs):
-        async with self.client.start_sftp_client() as sftp:
-            await sftp.rmdir(path)
+        async with self._pool.get() as channel:
+            await channel.rmdir(path)
 
     @wrap_exceptions
     async def _checksum(self, path):
@@ -253,6 +340,8 @@ class SSHFile(AbstractBufferedFile):
             self._location = self.path
 
         self._stack = AsyncExitStack()
+        weakref.finalize(self, sync, self.loop, self._stack.aclose)
+
         try:
             self._file = self._open_file()
         except Exception:
@@ -262,12 +351,10 @@ class SSHFile(AbstractBufferedFile):
 
     @wrap_exceptions
     async def _async_open_file(self):
-        sftp = await self._stack.enter_async_context(
-            self.fs.client.start_sftp_client()
-        )
+        channel = await self._stack.enter_async_context(self.fs._pool.get())
         # TODO: maybe pass block_size?
         return await self._stack.enter_async_context(
-            sftp.open(self._location, self.mode)
+            channel.open(self._location, self.mode)
         )
 
     _open_file = sync_wrapper(_async_open_file)
@@ -295,4 +382,3 @@ class SSHFile(AbstractBufferedFile):
 
     def close(self):
         super().close()
-        sync(self.loop, self._stack.aclose)
