@@ -1,12 +1,14 @@
 import asyncio
 import errno
 import functools
+import heapq
 import os
 import posixpath
 import secrets
 import shlex
 import stat
 import weakref
+from collections import Counter
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import datetime
 
@@ -58,7 +60,11 @@ def wrap_exceptions(func):
 _MAX_TIMEOUT = 60 * 60 * 3
 
 
-class SFTPChannelPool:
+class _SFTPChannelPool:
+    """_SFTPChannelPool is a pool manager for SFTP channels created
+    by asyncssh client. The pool might operate in two different modes
+    depending on the subclass."""
+
     def __init__(
         self,
         client,
@@ -68,10 +74,6 @@ class SFTPChannelPool:
         unsafe_terminate=True,
     ):
         self.client = client
-
-        # Queue size management will be handled by the class
-        self._queue = asyncio.Queue(0)
-        self._stack = AsyncExitStack()
 
         # This limit might change during the execution to reflect
         # better to the server's capacity to prevent getting too
@@ -88,36 +90,32 @@ class SFTPChannelPool:
         # When the pool is closing, whether to terminate all open
         # connections or raise an error to indicate there are leaks.
         self.unsafe_terminate = unsafe_terminate
+        self._stack = AsyncExitStack()
 
-    async def new_channel(self):
-        return await self._stack.enter_async_context(
-            self.client.start_sftp_client()
-        )
+    async def _maybe_new_channel(self):
+        # If there is no hard limit or the limit is not hit yet
+        # try to create a new channel
+        if (
+            self.max_channels is None
+            or self.active_channels < self.max_channels
+        ):
+            try:
+                channel = await self._stack.enter_async_context(
+                    self.client.start_sftp_client()
+                )
+            except ChannelOpenError:
+                # If we can't create any more channels, then change
+                # the hard limit to reflect that so that we don't hit
+                # these errors again.
+                self.max_channels = self.active_channels
+            else:
+                return channel
 
-    @asynccontextmanager
-    async def get(self):
-        if self._queue.empty():
-            # If there is no hard limit or the limit is not hit yet
-            # try to create a new channel
-            if (
-                self.max_channels is None
-                or self.active_channels < self.max_channels
-            ):
-                try:
-                    self._queue.put_nowait(await self.new_channel())
-                except ChannelOpenError:
-                    # If we can't create any more channels, then change
-                    # the hard limit to reflect that so that we don't hit
-                    # these errors again.
-                    self.max_channels = self.active_channels
+    def get(self):
+        raise NotImplementedError
 
-        channel = await asyncio.wait_for(
-            self._queue.get(), timeout=self.timeout
-        )
-        self.active_channels += 1
-        yield channel
-        self.active_channels -= 1
-        self._queue.put_nowait(channel)
+    async def _cleanup(self):
+        raise NotImplementedError
 
     async def close(self):
         if self.active_channels and not self.unsafe_terminate:
@@ -125,7 +123,84 @@ class SFTPChannelPool:
                 f"{type(self).__name__!r} can't be closed while there are active channels"
             )
 
-        await self._stack.aclose()
+        async with asyncio.Lock():
+            with suppress(Exception):
+                await self._cleanup()
+
+            await self._stack.aclose()
+
+
+class SFTPHardChannelPool(_SFTPChannelPool):
+    """A _SFTPChannelPool implementation that ensures at any moment in time,
+    a single SFTP channel might only be used by a single coroutine. When there
+    are no more active channels, the ``.get()`` method will block for a channel
+    to get released (if ``timeout`` is specified, it will poll for ``timeout``
+    seconds until a ``TimeoutError`` is raised)."""
+
+    def __init__(self, *args, **kwargs):
+        self._queue = asyncio.Queue(0)
+        super().__init__(*args, **kwargs)
+
+    @asynccontextmanager
+    async def get(self):
+        channel = None
+        if self._queue.empty():
+            channel = await self._maybe_new_channel()
+
+        if channel is None:
+            channel = await asyncio.wait_for(
+                self._queue.get(), timeout=self.timeout
+            )
+
+        self.active_channels += 1
+        yield channel
+        self.active_channels -= 1
+        self._queue.put_nowait(channel)
+
+    async def _cleanup(self):
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
+
+class SFTPSoftChannelPool(_SFTPChannelPool):
+    """A _SFTPChannelPool implementation that allows usage of same channels
+    by multiple coroutines and handles the balanced distribution of multiple
+    channels from least used to most used. The ``.get()`` method will not block
+    unlike the hard pool and no timeouts will happen on the management side."""
+
+    # Placeholder to use when there are no channels in
+    # the counter.
+    _NO_CHANNELS = [[None, 1]]
+
+    def __init__(self, *args, **kwargs):
+        self._channels = Counter()
+        super().__init__(*args, **kwargs)
+
+    @asynccontextmanager
+    async def get(self):
+        [(least_used_channel, num_connections)] = (
+            heapq.nsmallest(1, self._channels.items(), lambda kv: kv[1])
+            or self._NO_CHANNELS
+        )
+
+        if num_connections > 0:
+            channel = await self._maybe_new_channel()
+            if channel is not None:
+                least_used_channel = channel
+                num_connections = 0
+
+        if least_used_channel is None:
+            raise ValueError("Can't create any SFTP connections!")
+
+        print(f"channel connections: {num_connections}")
+        self._channels[least_used_channel] += 1
+        self.active_channels += 1
+        yield least_used_channel
+        self._channels[least_used_channel] -= 1
+        self.active_channels -= 1
+
+    async def _cleanup(self):
+        self._channels.clear()
 
 
 class SSHFileSystem(AsyncFileSystem):
@@ -138,6 +213,7 @@ class SSHFileSystem(AsyncFileSystem):
         password=_UNSET,
         client_keys=_UNSET,
         known_hosts=_UNSET,
+        sftp_channel_pool="soft",
         max_sftp_channels=_UNSET,
         max_sftp_channel_wait_timeout=_UNSET,
         **kwargs,
@@ -154,6 +230,13 @@ class SSHFileSystem(AsyncFileSystem):
                 "known_hosts": known_hosts,
             }
         )
+        if sftp_channel_pool == "soft":
+            self._pool_type = SFTPSoftChannelPool
+        elif sftp_channel_pool == "hard":
+            self._pool_type = SFTPHardChannelPool
+        else:
+            raise ValueError(f"Unknown pool type: {sftp_channel_pool!r}")
+
         self._pool_args = _drop_unset(
             {
                 "max_channels": max_sftp_channels,
@@ -171,7 +254,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _connect(self):
         _raw_client = asyncssh.connect(**self._client_args)
         client = await self._stack.enter_async_context(_raw_client)
-        pool = SFTPChannelPool(client, **self._pool_args)
+        pool = self._pool_type(client, **self._pool_args)
         return client, pool
 
     connect = sync_wrapper(_connect)
@@ -327,10 +410,10 @@ class SSHFileSystem(AsyncFileSystem):
 
 class SSHFile(AbstractBufferedFile):
     def __init__(self, fs, path, mode="rb", **kwargs):
-
+        self._file = None
         super().__init__(fs, path, mode, **kwargs)
-        self.loop = self.fs.loop
 
+        self.loop = self.fs.loop
         if self.mode not in {"rb", "wb"}:
             raise ValueError(f"Unsupported file open mode: {self.mode!r}")
 
@@ -358,8 +441,8 @@ class SSHFile(AbstractBufferedFile):
     _close_file = sync_wrapper(_async_close_file)
 
     async def _async_fetch_range(self, start, end):
-        if self.file is None:
-            self.file = await self._async_open_file()
+        if self._file is None:
+            self._file = await self._async_open_file()
 
         await self._file.seek(start)
         return await self._file.read(end - start)
