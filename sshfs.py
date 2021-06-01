@@ -100,7 +100,7 @@ class _SFTPChannelPool:
             or self.active_channels < self.max_channels
         ):
             try:
-                channel = await self._stack.enter_async_context(
+                return await self._stack.enter_async_context(
                     self.client.start_sftp_client()
                 )
             except ChannelOpenError:
@@ -108,8 +108,6 @@ class _SFTPChannelPool:
                 # the hard limit to reflect that so that we don't hit
                 # these errors again.
                 self.max_channels = self.active_channels
-            else:
-                return channel
 
     def get(self):
         raise NotImplementedError
@@ -192,7 +190,6 @@ class SFTPSoftChannelPool(_SFTPChannelPool):
         if least_used_channel is None:
             raise ValueError("Can't create any SFTP connections!")
 
-        print(f"channel connections: {num_connections}")
         self._channels[least_used_channel] += 1
         self.active_channels += 1
         yield least_used_channel
