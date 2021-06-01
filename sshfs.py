@@ -40,16 +40,16 @@ def wrap_exceptions(func):
         except PermissionDenied as exc:
             raise PermissionError(exc.reason) from exc
         except SFTPNoSuchFile as exc:
-            raise FileNotFoundError(errno.ENOENT, _NOT_FOUND)
+            raise FileNotFoundError(errno.ENOENT, _NOT_FOUND) from exc
         except ProcessError as exc:
             message = exc.stderr.strip()
             if message.endswith(_NOT_FOUND):
-                raise FileNotFoundError(errno.ENOENT, _NOT_FOUND)
+                raise FileNotFoundError(errno.ENOENT, _NOT_FOUND) from exc
             raise
         except SFTPFailure as exc:
             message = exc.reason
             if message.endswith("already exists"):
-                raise FileExistsError(errno.EEXIST, _FILE_EXISTS)
+                raise FileExistsError(errno.EEXIST, _FILE_EXISTS) from exc
             raise
 
     return wrapper
@@ -342,13 +342,6 @@ class SSHFile(AbstractBufferedFile):
         self._stack = AsyncExitStack()
         weakref.finalize(self, sync, self.loop, self._stack.aclose)
 
-        try:
-            self._file = self._open_file()
-        except Exception:
-            self.closed = True
-            self.close()
-            raise
-
     @wrap_exceptions
     async def _async_open_file(self):
         channel = await self._stack.enter_async_context(self.fs._pool.get())
@@ -357,18 +350,32 @@ class SSHFile(AbstractBufferedFile):
             channel.open(self._location, self.mode)
         )
 
+    async def _async_close_file(self):
+        await self._stack.aclose()
+        self._file = None
+
     _open_file = sync_wrapper(_async_open_file)
+    _close_file = sync_wrapper(_async_close_file)
 
     async def _async_fetch_range(self, start, end):
+        if self.file is None:
+            self.file = await self._async_open_file()
+
         await self._file.seek(start)
         return await self._file.read(end - start)
 
     _fetch_range = sync_wrapper(_async_fetch_range)
 
     async def _async_upload_chunk(self, final=False):
+        if self._file is None:
+            self._file = await self._async_open_file()
+
         await self._file.write(self.buffer.getvalue())
+
         if self.autocommit and final:
             await self._commit()
+            await self._async_close_file()
+            return True
 
     _upload_chunk = sync_wrapper(_async_upload_chunk)
 
@@ -378,7 +385,17 @@ class SSHFile(AbstractBufferedFile):
 
         await self.fs._mv(self._location, self.path)
 
+    async def _flush(self, force=False):
+        super().flush(force=force)
+        self._file.fsync()
+
     commit = sync_wrapper(_commit)
 
     def close(self):
+        # When the object is getting finalized, might
+        # raise some errors due to missing properties
+        # (eg stack or loop), so just ignore them since
+        # our finalization is handled by the weakref.finalize
+        with suppress(Exception):
+            self._close_file()
         super().close()
