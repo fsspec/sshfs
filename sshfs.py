@@ -223,7 +223,7 @@ class SSHFileSystem(AsyncFileSystem):
         username=_UNSET,
         password=_UNSET,
         client_keys=_UNSET,
-        known_hosts=_UNSET,
+        known_hosts=None,
         sftp_channel_pool="soft",
         max_sftp_channels=_UNSET,
         max_sftp_channel_wait_timeout=_UNSET,
@@ -231,6 +231,8 @@ class SSHFileSystem(AsyncFileSystem):
     ):
         super().__init__(self, **kwargs)
 
+        # user is a direct alias to 'username' option
+        username = username or kwargs.pop("user", _UNSET)
         self._client_args = _drop_unset(
             {
                 "host": host,
@@ -311,6 +313,9 @@ class SSHFileSystem(AsyncFileSystem):
             attributes = await channel.stat(path)
 
         info = self._decode_attributes(attributes)
+        path = path.rstrip("/")
+        if info["type"] == "directory":
+            path += "/"
         info["name"] = path
         return info
 
@@ -373,6 +378,7 @@ class SSHFileSystem(AsyncFileSystem):
         async with self._pool.get() as channel:
             await channel.makedirs(path, exist_ok=exist_ok, attrs=attrs)
 
+    mkdir = sync_wrapper(_mkdir)
     makedirs = sync_wrapper(_makedirs)
 
     @wrap_exceptions

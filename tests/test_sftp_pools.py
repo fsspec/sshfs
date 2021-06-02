@@ -52,7 +52,7 @@ class FakeSSHClient:
         yield FakeSFTPClient(self.counter)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def fake_client():
     yield FakeSSHClient()
 
