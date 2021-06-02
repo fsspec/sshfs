@@ -45,21 +45,21 @@ class FakeSSHClient:
     async def start_sftp_client(self):
         from asyncssh.misc import ChannelOpenError
 
-        if self.max_channels is not None and self.counter == self.max_channels:
+        if self.max_channels is not None and self.counter >= self.max_channels:
             raise ChannelOpenError(None, None)
 
         self.counter += 1
         yield FakeSFTPClient(self.counter)
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def fake_client():
     yield FakeSSHClient()
 
 
 @pytest.mark.asyncio
 @all_queues
-async def test_pool_hard_queue_caching(fake_client, queue_type):
+async def test_pool_general_queue_caching(fake_client, queue_type):
     pool = queue_type(fake_client, poll=False)
 
     async with pool.get() as channel:
@@ -78,6 +78,16 @@ async def test_pool_hard_queue_caching(fake_client, queue_type):
     async with open_channels(pool, 5) as channels:
         assert {channel.no for channel in channels} == {1, 2, 3, 4, 5}
         assert pool.active_channels == 5
+
+
+@pytest.mark.asyncio
+@all_queues
+async def test_pool_general_no_connections(fake_client, queue_type):
+    pool = queue_type(fake_client, poll=False)
+    fake_client.max_channels = 0
+
+    with pytest.raises(ValueError):
+        await open_channel(pool)
 
 
 @pytest.mark.asyncio

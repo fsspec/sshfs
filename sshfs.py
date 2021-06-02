@@ -154,7 +154,7 @@ class SFTPHardChannelPool(_SFTPChannelPool):
             channel = await self._maybe_new_channel()
 
         if channel is None:
-            if not self.active_channels:
+            if self._queue.qsize() == 0 and not self.active_channels:
                 raise ValueError("Can't create any SFTP connections!")
 
             if self._poll:
