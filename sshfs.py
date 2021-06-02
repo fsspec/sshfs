@@ -154,6 +154,9 @@ class SFTPHardChannelPool(_SFTPChannelPool):
             channel = await self._maybe_new_channel()
 
         if channel is None:
+            if not self.active_channels:
+                raise ValueError("Can't create any SFTP connections!")
+
             if self._poll:
                 channel = await asyncio.wait_for(
                     self._queue.get(), timeout=self.timeout

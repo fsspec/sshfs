@@ -3,6 +3,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 import pytest
 
+from sshfs import SFTPHardChannelPool, SFTPSoftChannelPool
+
 _POLL_WAIT = 0.1
 
 
@@ -21,6 +23,12 @@ async def open_channels(pool, amount):
 async def open_channel(pool):
     async with pool.get() as channel:
         return channel
+
+
+def all_queues(func):
+    return pytest.mark.parametrize(
+        "queue_type", [SFTPHardChannelPool, SFTPSoftChannelPool]
+    )(func)
 
 
 class FakeSFTPClient:
@@ -50,10 +58,9 @@ def fake_client():
 
 
 @pytest.mark.asyncio
-async def test_pool_hard_queue_caching(fake_client):
-    from sshfs import SFTPHardChannelPool
-
-    pool = SFTPHardChannelPool(fake_client, poll=False)
+@all_queues
+async def test_pool_hard_queue_caching(fake_client, queue_type):
+    pool = queue_type(fake_client, poll=False)
 
     async with pool.get() as channel:
         assert channel.no == 1
@@ -66,6 +73,8 @@ async def test_pool_hard_queue_caching(fake_client):
     async with pool.get() as channel:
         assert channel.no == 1
 
+    assert fake_client.counter == 1
+
     async with open_channels(pool, 5) as channels:
         assert {channel.no for channel in channels} == {1, 2, 3, 4, 5}
         assert pool.active_channels == 5
@@ -73,8 +82,6 @@ async def test_pool_hard_queue_caching(fake_client):
 
 @pytest.mark.asyncio
 async def test_pool_hard_queue_limits(fake_client):
-    from sshfs import SFTPHardChannelPool
-
     pool = SFTPHardChannelPool(fake_client, poll=False, max_channels=2)
 
     async with open_channels(pool, 2) as channels:
@@ -84,8 +91,6 @@ async def test_pool_hard_queue_limits(fake_client):
 
 @pytest.mark.asyncio
 async def test_pool_hard_queue_auto_limitting(fake_client):
-    from sshfs import SFTPHardChannelPool
-
     fake_client.max_channels = 4
     pool = SFTPHardChannelPool(fake_client, poll=False)
 
@@ -95,3 +100,36 @@ async def test_pool_hard_queue_auto_limitting(fake_client):
 
         assert pool.active_channels == fake_client.max_channels
         assert pool.max_channels == fake_client.max_channels
+
+
+@pytest.mark.asyncio
+async def test_pool_soft_queue_limits(fake_client):
+    pool = SFTPSoftChannelPool(fake_client, max_channels=2)
+
+    async with open_channels(pool, 6) as channels:
+        assert len({channel.no for channel in channels}) <= 2
+
+
+@pytest.mark.asyncio
+async def test_pool_soft_queue_balancing(fake_client):
+    pool = SFTPSoftChannelPool(fake_client, max_channels=4)
+
+    async with pool.get() as channel_1:
+        assert channel_1.no == 1
+
+    async with pool.get() as channel_1:
+        assert channel_1.no == 1
+
+    async with open_channels(pool, 6) as channels:
+
+        primaries, secondaries = channels[:4], channels[4:]
+        assert {channel.no for channel in primaries} == {1, 2, 3, 4}
+        assert {channel.no for channel in secondaries} == {1, 2}
+
+        async with pool.get() as channel_3:
+            assert channel_3.no == 3
+
+        async with pool.get() as channel_3:
+            async with pool.get() as channel_4:
+                assert channel_4.no == 4
+            assert channel_3.no == 3
