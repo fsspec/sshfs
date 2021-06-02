@@ -117,3 +117,23 @@ def test_checksum(fs, remote_dir):
 
     checksum = hashlib.md5(data).hexdigest()
     assert fs.checksum(remote_dir + "/a.txt") == checksum
+
+
+def test_ls(fs, remote_dir):
+    fs.mkdir(remote_dir + "dir/")
+    files = set()
+    for no in range(8):
+        file = remote_dir + f"dir/test_{no}"
+        fs.touch(file)
+        files.add(file)
+
+    assert set(fs.ls(remote_dir + "dir/")) == files
+
+    dirs = fs.ls(remote_dir + "dir/", detail=True)
+    expected = [fs.info(file) for file in files]
+
+    by_name = lambda details: details["name"]
+    dirs.sort(key=by_name)
+    expected.sort(key=by_name)
+
+    assert dirs == expected
