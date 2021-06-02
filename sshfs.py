@@ -2,6 +2,7 @@ import asyncio
 import errno
 import functools
 import heapq
+import io
 import os
 import posixpath
 import secrets
@@ -15,7 +16,12 @@ from datetime import datetime
 import asyncssh
 from asyncssh import ProcessError
 from asyncssh.misc import ChannelOpenError, PermissionDenied
-from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile, SFTPOpUnsupported
+from asyncssh.sftp import (
+    SFTP_BLOCK_SIZE,
+    SFTPFailure,
+    SFTPNoSuchFile,
+    SFTPOpUnsupported,
+)
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 from fsspec.spec import AbstractBufferedFile
 
@@ -401,81 +407,59 @@ class SSHFileSystem(AsyncFileSystem):
     checksum = sync_wrapper(_checksum)
     get_system = sync_wrapper(_get_system)
 
-    def _open(self, path, mode="rb", **kwargs):
-        return SSHFile(self, path, mode, **kwargs)
+    def _open(self, path, *args, **kwargs):
+        return SSHFile(self, path, *args, **kwargs)
 
 
-class SSHFile(AbstractBufferedFile):
-    def __init__(self, fs, path, mode="rb", **kwargs):
-        self._file = None
-        super().__init__(fs, path, mode, **kwargs)
+def _mirror_method(method):
+    async def _method(self, *args, **kwargs):
+        wrapped_meth = getattr(self._file, method)
+        return await wrapped_meth(*args, **kwargs)
 
-        self.loop = self.fs.loop
-        if self.mode not in {"rb", "wb"}:
-            raise ValueError(f"Unsupported file open mode: {self.mode!r}")
+    _method.__name__ = method
+    return sync_wrapper(_method)
 
-        if "w" in self.mode:
-            self._location = _get_tmp_file(self.fs._parent(self.path))
-        else:
-            self._location = self.path
 
-        self._stack = AsyncExitStack()
-        weakref.finalize(self, sync, self.loop, self._stack.aclose)
+class SSHFile(io.IOBase):
+    def __init__(
+        self, fs, path, mode="rb", block_size=SFTP_BLOCK_SIZE, **kwargs
+    ):
+        self.fs = fs
+        self.loop = fs.loop
 
-    @wrap_exceptions
-    async def _async_open_file(self):
-        channel = await self._stack.enter_async_context(self.fs._pool.get())
-        # TODO: maybe pass block_size?
-        return await self._stack.enter_async_context(
-            channel.open(self._location, self.mode)
-        )
+        self.path = path
+        self.mode = mode
+        self.blocksize = block_size
+        self.kwargs = kwargs
 
-    async def _async_close_file(self):
-        await self._stack.aclose()
-        self._file = None
+        self._file = sync(self.loop, self._open_file)
 
-    _open_file = sync_wrapper(_async_open_file)
-    _close_file = sync_wrapper(_async_close_file)
+    async def _open_file(self):
+        # TODO: this needs to keep a reference to the
+        # pool as well, otherwise we might broke our
+        # guarantee for the hard pool since the file
+        # will still be using that channel to perform
+        # it's operations but the pool it thinking this
+        # channel is freed.
+        async with self.fs._pool.get() as channel:
+            return await channel.open(self.path, self.mode)
 
-    async def _async_fetch_range(self, start, end):
-        if self._file is None:
-            self._file = await self._async_open_file()
+    read = _mirror_method("read")
+    seek = _mirror_method("seek")
+    tell = _mirror_method("tell")
 
-        await self._file.seek(start)
-        return await self._file.read(end - start)
+    write = _mirror_method("write")
+    fsync = flush = _mirror_method("fsync")
+    truncate = _mirror_method("truncate")
 
-    _fetch_range = sync_wrapper(_async_fetch_range)
+    close = _mirror_method("close")
 
-    async def _async_upload_chunk(self, final=False):
-        if self._file is None:
-            self._file = await self._async_open_file()
+    def __enter__(self):
+        return self
 
-        await self._file.write(self.buffer.getvalue())
+    def __exit__(self, *exc_info):
+        self.close()
 
-        if self.autocommit and final:
-            await self._commit()
-            await self._async_close_file()
-            return True
-
-    _upload_chunk = sync_wrapper(_async_upload_chunk)
-
-    async def _commit(self):
-        if "w" not in self.mode:
-            return None
-
-        await self.fs._mv(self._location, self.path)
-
-    async def _flush(self, force=False):
-        super().flush(force=force)
-        self._file.fsync()
-
-    commit = sync_wrapper(_commit)
-
-    def close(self):
-        # When the object is getting finalized, might
-        # raise some errors due to missing properties
-        # (eg stack or loop), so just ignore them since
-        # our finalization is handled by the weakref.finalize
-        with suppress(Exception):
-            self._close_file()
-        super().close()
+    @property
+    def closed(self):
+        return self._file.closed
