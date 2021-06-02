@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from asyncssh.sftp import SFTPFailure
 
 from sshfs import SSHFileSystem
 
@@ -137,3 +138,91 @@ def test_ls(fs, remote_dir):
     expected.sort(key=by_name)
 
     assert dirs == expected
+
+
+def test_mkdir(fs, remote_dir):
+    fs.mkdir(remote_dir + "dir/")
+    assert fs.isdir(remote_dir + "dir/")
+    assert len(fs.ls(remote_dir + "dir/")) == 0
+
+    # SFTP server yields a generic error, so we can't
+    # cast it anything (it might be a permission error
+    # or in this case an identifier that the directory
+    # exists).
+    with pytest.raises(SFTPFailure):
+        fs.mkdir(remote_dir + "dir/", create_parents=False)
+
+
+def test_makedirs(fs, remote_dir):
+    fs.makedirs(remote_dir + "dir/a/b/c/")
+    assert fs.isdir(remote_dir + "dir/a/b/c/")
+    assert fs.isdir(remote_dir + "dir/a/b/")
+    assert fs.isdir(remote_dir + "dir/a/")
+
+    with pytest.raises(FileExistsError):
+        fs.makedirs(remote_dir + "dir/a/b/c/")
+
+    fs.makedirs(remote_dir + "dir/a/b/c/", exist_ok=True)
+
+
+def test_exceptions(fs, remote_dir):
+    with pytest.raises(FileNotFoundError):
+        with fs.open(remote_dir + "/a.txt"):
+            ...
+
+    with pytest.raises(FileNotFoundError):
+        fs.copy(remote_dir + "/u.txt", remote_dir + "/y.txt")
+
+    fs.makedirs(remote_dir + "/dir/a/b/c")
+    with pytest.raises(FileExistsError):
+        fs.makedirs(remote_dir + "/dir/a/b/c")
+
+
+def test_open_rw(fs, remote_dir):
+    data = b"dvc.org"
+
+    with fs.open(remote_dir + "/a.txt", "wb") as stream:
+        stream.write(data)
+
+    with fs.open(remote_dir + "/a.txt") as stream:
+        assert stream.read() == data
+
+
+def test_open_rw_flush(fs, remote_dir):
+    data = b"dvc.org"
+
+    with fs.open(remote_dir + "/b.txt", "wb") as stream:
+        for _ in range(200):
+            stream.write(data)
+            stream.write(data)
+            stream.flush()
+
+    with fs.open(remote_dir + "/b.txt", "rb") as stream:
+        assert stream.read() == data * 400
+
+
+def test_open_rwa(fs, remote_dir):
+    data = b"dvc.org"
+
+    with fs.open(remote_dir + "/c.txt", "wb") as stream:
+        for _ in range(200):
+            stream.write(data)
+
+    with fs.open(remote_dir + "/c.txt", "ab") as stream:
+        for _ in range(200):
+            stream.write(data)
+
+    with fs.open(remote_dir + "/c.txt", "rb") as stream:
+        assert stream.read() == data * 400
+
+
+def test_open_r_seek(fs, remote_dir):
+    data = b"dvc.org"
+
+    with fs.open(remote_dir + "/c.txt", "wb") as stream:
+        for _ in range(200):
+            stream.write(data)
+
+    with fs.open(remote_dir + "/c.txt", "rb") as stream:
+        stream.seek(len(data * 100))
+        assert stream.read() == data * 100
