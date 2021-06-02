@@ -78,6 +78,7 @@ class _SFTPChannelPool:
         max_channels=None,
         timeout=_MAX_TIMEOUT,
         unsafe_terminate=True,
+        **kwargs,
     ):
         self.client = client
 
@@ -143,6 +144,7 @@ class SFTPHardChannelPool(_SFTPChannelPool):
 
     def __init__(self, *args, **kwargs):
         self._queue = asyncio.Queue(0)
+        self._poll = kwargs.pop("poll", True)
         super().__init__(*args, **kwargs)
 
     @asynccontextmanager
@@ -152,9 +154,12 @@ class SFTPHardChannelPool(_SFTPChannelPool):
             channel = await self._maybe_new_channel()
 
         if channel is None:
-            channel = await asyncio.wait_for(
-                self._queue.get(), timeout=self.timeout
-            )
+            if self._poll:
+                channel = await asyncio.wait_for(
+                    self._queue.get(), timeout=self.timeout
+                )
+            else:
+                channel = self._queue.get_nowait()
 
         self.active_channels += 1
         yield channel
