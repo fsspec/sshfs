@@ -427,13 +427,19 @@ class SSHFile(io.IOBase):
         self.fs = fs
         self.loop = fs.loop
 
+        # TODO: support r+ / w+ / a+
+        if mode not in {"rb", "wb", "ab"}:
+            raise ValueError("Unsupported file mode: {mode}")
+
         self.path = path
         self.mode = mode
         self.blocksize = block_size
         self.kwargs = kwargs
 
         self._file = sync(self.loop, self._open_file)
+        self._closed = False
 
+    @wrap_exceptions
     async def _open_file(self):
         # TODO: this needs to keep a reference to the
         # pool as well, otherwise we might broke our
@@ -449,10 +455,23 @@ class SSHFile(io.IOBase):
     tell = _mirror_method("tell")
 
     write = _mirror_method("write")
-    fsync = flush = _mirror_method("fsync")
+    fsync = _mirror_method("fsync")
     truncate = _mirror_method("truncate")
 
-    close = _mirror_method("close")
+    _close = _mirror_method("close")
+
+    def readable(self):
+        return "r" in self.mode
+
+    def writable(self):
+        return not self.readable()
+
+    def close(self):
+        if self._closed:
+            return None
+
+        self._close()
+        self._closed = True
 
     def __enter__(self):
         return self
@@ -462,4 +481,4 @@ class SSHFile(io.IOBase):
 
     @property
     def closed(self):
-        return self._file.closed
+        return self._closed
