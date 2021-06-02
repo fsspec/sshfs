@@ -387,9 +387,35 @@ class SSHFileSystem(AsyncFileSystem):
             await channel.unlink(path)
 
     @wrap_exceptions
-    async def _rmdir(self, path, **kwargs):
+    async def _rmdir(
+        self,
+        path,
+        recursive=False,
+        ignore_errors=False,
+        on_error=None,
+        **kwargs,
+    ):
         async with self._pool.get() as channel:
-            await channel.rmdir(path)
+            if recursive:
+                await channel.rmtree(
+                    path, ignore_errors=ignore_errors, onerror=on_error
+                )
+            else:
+                await channel.rmdir(path)
+
+    async def _rm(self, path, recursive=False, **kwargs):
+        if isinstance(path, str):
+            path = [path]
+
+        coros = []
+        for sub_path in path:
+            if await self._isdir(sub_path):
+                coro = self._rmdir(sub_path, recursive, **kwargs)
+            else:
+                coro = self._rm_file(sub_path)
+            coros.append(coro)
+
+        await asyncio.gather(*coros)
 
     @wrap_exceptions
     async def _checksum(self, path):

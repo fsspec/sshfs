@@ -1,3 +1,4 @@
+import hashlib
 import posixpath
 import tempfile
 from datetime import datetime, timedelta
@@ -58,3 +59,61 @@ def test_info(fs, remote_dir):
 
     details = fs.info(remote_dir + "/dir/")
     assert details["name"] == remote_dir + "/dir/"
+
+
+def test_move(fs, remote_dir):
+    fs.touch(remote_dir + "/a.txt")
+    initial_info = fs.info(remote_dir + "/a.txt")
+
+    fs.move(remote_dir + "/a.txt", remote_dir + "/b.txt")
+    secondary_info = fs.info(remote_dir + "/b.txt")
+
+    assert not fs.exists(remote_dir + "/a.txt")
+    assert fs.exists(remote_dir + "/b.txt")
+
+    initial_info.pop("name")
+    secondary_info.pop("name")
+    assert initial_info == secondary_info
+
+
+def test_copy(fs, remote_dir):
+    fs.touch(remote_dir + "/a.txt")
+    initial_info = fs.info(remote_dir + "/a.txt")
+
+    fs.copy(remote_dir + "/a.txt", remote_dir + "/b.txt")
+    secondary_info = fs.info(remote_dir + "/b.txt")
+
+    assert fs.exists(remote_dir + "/a.txt")
+    assert fs.exists(remote_dir + "/b.txt")
+
+    initial_info.pop("name")
+    secondary_info.pop("name")
+    assert initial_info == secondary_info
+
+
+def test_rm(fs, remote_dir):
+    fs.touch(remote_dir + "/a.txt")
+    fs.rm(remote_dir + "/a.txt")
+    assert not fs.exists(remote_dir + "/a.txt")
+
+    fs.mkdir(remote_dir + "/dir")
+    fs.rm(remote_dir + "/dir")
+    assert not fs.exists(remote_dir + "/dir")
+
+    fs.mkdir(remote_dir + "/dir")
+    fs.touch(remote_dir + "/dir/a")
+    fs.touch(remote_dir + "/dir/b")
+    fs.mkdir(remote_dir + "/dir/c/")
+    fs.touch(remote_dir + "/dir/c/a/")
+    fs.rm(remote_dir + "/dir", recursive=True)
+    assert not fs.exists(remote_dir + "/dir")
+
+
+def test_checksum(fs, remote_dir):
+    data = b"iterative.ai"
+
+    with fs.open(remote_dir + "/a.txt", "wb") as stream:
+        stream.write(data)
+
+    checksum = hashlib.md5(data).hexdigest()
+    assert fs.checksum(remote_dir + "/a.txt") == checksum
