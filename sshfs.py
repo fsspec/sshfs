@@ -488,7 +488,7 @@ class SSHFile(io.IOBase):
         # channel is freed.
         async with self.fs._pool.get() as channel:
             return await channel.open(
-                self.path, self.mode, block_size=self.blocksize
+                self.path, self.mode, block_size=self.blocksize, **kwargs
             )
 
     read = _mirror_method("read")
