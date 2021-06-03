@@ -332,6 +332,11 @@ class SSHFileSystem(AsyncFileSystem):
             await self._rm_file(lpath)
 
     @wrap_exceptions
+    async def _put_file(self, lpath, rpath, **kwargs):
+        async with self._pool.get() as channel:
+            await channel.put(lpath, rpath)
+
+    @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self.client.run(cmd, check=True)
@@ -457,9 +462,7 @@ def _mirror_method(method):
 
 
 class SSHFile(io.IOBase):
-    def __init__(
-        self, fs, path, mode="rb", block_size=SFTP_BLOCK_SIZE, **kwargs
-    ):
+    def __init__(self, fs, path, mode="rb", block_size=None, **kwargs):
         self.fs = fs
         self.loop = fs.loop
 
@@ -469,7 +472,7 @@ class SSHFile(io.IOBase):
 
         self.path = path
         self.mode = mode
-        self.blocksize = block_size
+        self.blocksize = block_size or SFTP_BLOCK_SIZE
         self.kwargs = kwargs
 
         self._file = sync(self.loop, self._open_file)

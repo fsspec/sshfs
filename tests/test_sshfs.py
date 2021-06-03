@@ -273,3 +273,13 @@ def test_concurrent_operations(fs, remote_dir):
         read_names = {future.result() for future in read_futures}
 
         assert write_names == read_names
+
+
+def test_put_file(fs, remote_dir):
+    with tempfile.NamedTemporaryFile() as file:
+        file.file.write(b"data")
+        file.file.flush()
+        fs.put_file(file.name, remote_dir + "/a.txt")
+
+    with fs.open(remote_dir + "/a.txt") as stream:
+        assert stream.read() == b"data"
