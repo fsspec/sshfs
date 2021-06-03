@@ -1,6 +1,9 @@
 import hashlib
 import posixpath
+import secrets
 import tempfile
+import warnings
+from concurrent import futures
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +20,11 @@ DEVIATION = 5
 
 @pytest.fixture(scope="session")
 def ssh_server():
-    import mockssh
+    with warnings.catch_warnings():
+        # Somewhere in the 'invoke' library, there is an import of
+        # deprecated 'imp' module so we simply ignore that warning.
+        warnings.simplefilter("ignore", category=DeprecationWarning)
+        import mockssh
 
     with mockssh.Server(USERS) as server:
         yield server
@@ -226,3 +233,31 @@ def test_open_r_seek(fs, remote_dir):
     with fs.open(remote_dir + "/c.txt", "rb") as stream:
         stream.seek(len(data * 100))
         assert stream.read() == data * 100
+
+
+def test_concurrent_operations(fs, remote_dir):
+    def create_random_file():
+        name = secrets.token_hex(16)
+        with fs.open(remote_dir + "/" + name, "w") as stream:
+            stream.write(name)
+        return name
+
+    def read_random_file(name):
+        with fs.open(remote_dir + "/" + name, "r") as stream:
+            return stream.read()
+
+    with futures.ThreadPoolExecutor() as executor:
+
+        write_futures, _ = futures.wait(
+            [executor.submit(create_random_file) for _ in range(64)],
+            return_when=futures.ALL_COMPLETED,
+        )
+        write_names = {future.result() for future in write_futures}
+
+        read_futures, _ = futures.wait(
+            [executor.submit(read_random_file, name) for name in write_names],
+            return_when=futures.ALL_COMPLETED,
+        )
+        read_names = {future.result() for future in read_futures}
+
+        assert write_names == read_names
