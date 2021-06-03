@@ -53,6 +53,17 @@ def fs(ssh_server, user="user"):
     )
 
 
+@pytest.fixture
+def fs_hard_queue(ssh_server, user="user"):
+    yield SSHFileSystem(
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username=user,
+        client_keys=[USERS[user]],
+        sftp_channel_pool="hard",
+    )
+
+
 def test_info(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
@@ -235,6 +246,7 @@ def test_open_r_seek(fs, remote_dir):
         assert stream.read() == data * 100
 
 
+@pytest.mark.parametrize("fs", [fs, fs_hard_queue], indirect=True)
 def test_concurrent_operations(fs, remote_dir):
     def create_random_file():
         name = secrets.token_hex(16)
