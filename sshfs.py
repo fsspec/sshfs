@@ -17,6 +17,7 @@ import asyncssh
 from asyncssh import ProcessError
 from asyncssh.misc import ChannelOpenError, PermissionDenied
 from asyncssh.sftp import (
+    _MAX_SFTP_REQUESTS,
     SFTP_BLOCK_SIZE,
     SFTPFailure,
     SFTPNoSuchFile,
@@ -462,7 +463,9 @@ def _mirror_method(method):
 
 
 class SSHFile(io.IOBase):
-    def __init__(self, fs, path, mode="rb", block_size=None, **kwargs):
+    def __init__(
+        self, fs, path, mode="rb", block_size=None, max_requests=None, **kwargs
+    ):
         self.fs = fs
         self.loop = fs.loop
 
@@ -473,6 +476,7 @@ class SSHFile(io.IOBase):
         self.path = path
         self.mode = mode
         self.blocksize = block_size or SFTP_BLOCK_SIZE
+        self.max_requests = max_requests or _MAX_SFTP_REQUESTS
         self.kwargs = kwargs
 
         self._file = sync(self.loop, self._open_file)
@@ -488,7 +492,10 @@ class SSHFile(io.IOBase):
         # channel is freed.
         async with self.fs._pool.get() as channel:
             return await channel.open(
-                self.path, self.mode, block_size=self.blocksize, **kwargs
+                self.path,
+                self.mode,
+                block_size=self.blocksize,
+                max_requests=self.max_requests,
             )
 
     read = _mirror_method("read")
