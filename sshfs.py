@@ -36,10 +36,6 @@ def _drop_unset(namespace):
     }
 
 
-def _get_tmp_file(path):
-    return posixpath.join(path, f".tmp.{secrets.token_hex(16)}")
-
-
 def wrap_exceptions(func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
