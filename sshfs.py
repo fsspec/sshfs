@@ -484,7 +484,9 @@ class SSHFile(io.IOBase):
         # it's operations but the pool it thinking this
         # channel is freed.
         async with self.fs._pool.get() as channel:
-            return await channel.open(self.path, self.mode)
+            return await channel.open(
+                self.path, self.mode, block_size=self.blocksize
+            )
 
     read = _mirror_method("read")
     seek = _mirror_method("seek")
