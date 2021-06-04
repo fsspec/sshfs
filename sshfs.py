@@ -221,6 +221,8 @@ class SSHFileSystem(AsyncFileSystem):
         password=_UNSET,
         client_keys=_UNSET,
         known_hosts=None,
+        compression_algs=_UNSET,
+        encryption_algs=_UNSET,
         sftp_channel_pool="soft",
         max_sftp_channels=_UNSET,
         max_sftp_channel_wait_timeout=_UNSET,
@@ -228,8 +230,6 @@ class SSHFileSystem(AsyncFileSystem):
     ):
         super().__init__(self, **kwargs)
 
-        # user is a direct alias to 'username' option
-        username = username or kwargs.pop("user", _UNSET)
         self._client_args = _drop_unset(
             {
                 "host": host,
@@ -238,15 +238,17 @@ class SSHFileSystem(AsyncFileSystem):
                 "password": password,
                 "client_keys": client_keys,
                 "known_hosts": known_hosts,
+                "encryption_algs": encryption_algs,
+                "compression_algs": compression_algs,
             }
         )
+
         if sftp_channel_pool == "soft":
             self._pool_type = SFTPSoftChannelPool
         elif sftp_channel_pool == "hard":
             self._pool_type = SFTPHardChannelPool
         else:
             raise ValueError(f"Unknown pool type: {sftp_channel_pool!r}")
-
         self._pool_args = _drop_unset(
             {
                 "max_channels": max_sftp_channels,
