@@ -18,7 +18,6 @@ from asyncssh import ProcessError
 from asyncssh.misc import ChannelOpenError, PermissionDenied
 from asyncssh.sftp import (
     _MAX_SFTP_REQUESTS,
-    SFTP_BLOCK_SIZE,
     SFTPFailure,
     SFTPNoSuchFile,
     SFTPOpUnsupported,
@@ -464,6 +463,10 @@ def _mirror_method(method):
     return sync_wrapper(_method)
 
 
+# A copy of SFTP_BLOCK_SIZE (16KB)
+BASE_BLOCK_SIZE = 2 ** 14
+
+
 class SSHFile(io.IOBase):
     def __init__(
         self, fs, path, mode="rb", block_size=None, max_requests=None, **kwargs
@@ -477,8 +480,29 @@ class SSHFile(io.IOBase):
 
         self.path = path
         self.mode = mode
-        self.blocksize = block_size or SFTP_BLOCK_SIZE
         self.max_requests = max_requests or _MAX_SFTP_REQUESTS
+
+        if block_size is None:
+            # "The OpenSSH SFTP server will close the connection
+            # if it receives a message larger than 256 KB, and
+            # limits read requests to returning no more than
+            # 64 KB."
+            #
+            # We are going to use the maximum block_size possible
+            # with a 16KB margin (so instead of sending 256 KB data,
+            # we'll send 240 KB + headers for write requests)
+
+            if self.readable():
+                block_size = BASE_BLOCK_SIZE * 3
+            else:
+                block_size = BASE_BLOCK_SIZE * 15
+
+        # The blocksize is often used with constructs like
+        # shutil.copyfileobj(src, dst, length=file.blocksize) and since we are
+        # using pipelining, we are going to reflect the total size rather than
+        # a size of chunk to our limits.
+        self.blocksize = block_size * self.max_requests
+
         self.kwargs = kwargs
 
         self._file = sync(self.loop, self._open_file)
@@ -496,7 +520,7 @@ class SSHFile(io.IOBase):
             return await channel.open(
                 self.path,
                 self.mode,
-                block_size=self.blocksize,
+                block_size=self.blocksize // self.max_requests,
                 max_requests=self.max_requests,
             )
 
