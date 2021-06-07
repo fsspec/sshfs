@@ -26,7 +26,7 @@ jobs:
         python -m pip install -e .
 
     - name: Test
-      run: python -m pytest --cov-report=xml
+      run: python -m pytest --cov-report=xml --cov=.
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v1.0.13
