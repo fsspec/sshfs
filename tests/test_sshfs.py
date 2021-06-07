@@ -55,12 +55,14 @@ def fs(ssh_server, user="user"):
 
 @pytest.fixture
 def fs_hard_queue(ssh_server, user="user"):
+    from sshfs import SFTPHardChannelPool
+
     yield SSHFileSystem(
         host=ssh_server.host,
         port=ssh_server.port,
         username=user,
         client_keys=[USERS[user]],
-        sftp_channel_pool="hard",
+        pool_type=SFTPHardChannelPool,
     )
 
 

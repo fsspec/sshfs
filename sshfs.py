@@ -25,15 +25,8 @@ from asyncssh.sftp import (
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 from fsspec.spec import AbstractBufferedFile
 
-_UNSET = object()
 _NOT_FOUND = os.strerror(errno.ENOENT)
 _FILE_EXISTS = os.strerror(errno.EEXIST)
-
-
-def _drop_unset(namespace):
-    return {
-        key: value for key, value in namespace.items() if value is not _UNSET
-    }
 
 
 def wrap_exceptions(func):
@@ -215,57 +208,27 @@ class SSHFileSystem(AsyncFileSystem):
         self,
         host,
         *,
-        port=_UNSET,
-        username=_UNSET,
-        password=_UNSET,
-        client_keys=_UNSET,
-        known_hosts=None,
-        compression_algs=_UNSET,
-        encryption_algs=_UNSET,
-        sftp_channel_pool="soft",
-        max_sftp_channels=_UNSET,
-        max_sftp_channel_wait_timeout=_UNSET,
+        pool_type=SFTPSoftChannelPool,
         **kwargs,
     ):
         super().__init__(self, **kwargs)
 
-        self._client_args = _drop_unset(
-            {
-                "host": host,
-                "port": port,
-                "username": username,
-                "password": password,
-                "client_keys": client_keys,
-                "known_hosts": known_hosts,
-                "encryption_algs": encryption_algs,
-                "compression_algs": compression_algs,
-            }
-        )
-
-        if sftp_channel_pool == "soft":
-            self._pool_type = SFTPSoftChannelPool
-        elif sftp_channel_pool == "hard":
-            self._pool_type = SFTPHardChannelPool
-        else:
-            raise ValueError(f"Unknown pool type: {sftp_channel_pool!r}")
-        self._pool_args = _drop_unset(
-            {
-                "max_channels": max_sftp_channels,
-                "timeout": max_sftp_channel_wait_timeout,
-            }
-        )
+        _client_args = kwargs.copy()
+        _client_args.setdefault("known_hosts", None)
 
         self._stack = AsyncExitStack()
-        self._client, self._pool = self.connect()
+        self._client, self._pool = self.connect(
+            host, pool_type, **_client_args
+        )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
         )
 
     @wrap_exceptions
-    async def _connect(self):
-        _raw_client = asyncssh.connect(**self._client_args)
+    async def _connect(self, host, pool_type, **client_args):
+        _raw_client = asyncssh.connect(host, **client_args)
         client = await self._stack.enter_async_context(_raw_client)
-        pool = self._pool_type(client, **self._pool_args)
+        pool = pool_type(client)
         return client, pool
 
     connect = sync_wrapper(_connect)
