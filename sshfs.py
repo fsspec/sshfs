@@ -5,7 +5,6 @@ import heapq
 import io
 import os
 import posixpath
-import secrets
 import shlex
 import stat
 import weakref
@@ -23,7 +22,6 @@ from asyncssh.sftp import (
     SFTPOpUnsupported,
 )
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
-from fsspec.spec import AbstractBufferedFile
 
 _NOT_FOUND = os.strerror(errno.ENOENT)
 _FILE_EXISTS = os.strerror(errno.EEXIST)
