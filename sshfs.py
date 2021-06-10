@@ -302,6 +302,11 @@ class SSHFileSystem(AsyncFileSystem):
             await channel.put(lpath, rpath)
 
     @wrap_exceptions
+    async def _get_file(self, lpath, rpath, **kwargs):
+        async with self._pool.get() as channel:
+            await channel.get(lpath, rpath)
+
+    @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self.client.run(cmd, check=True)
