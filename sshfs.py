@@ -105,7 +105,7 @@ class _SFTPChannelPool:
                 # these errors again.
                 self.max_channels = self.active_channels
 
-    def get(self):
+    async def get(self):
         raise NotImplementedError
 
     async def _cleanup(self):
