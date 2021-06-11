@@ -3,7 +3,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 import pytest
 
-from sshfs import SFTPHardChannelPool, SFTPSoftChannelPool
+from sshfs.pools import SFTPHardChannelPool, SFTPSoftChannelPool
 
 _POLL_WAIT = 0.1
 
