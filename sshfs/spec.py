@@ -151,7 +151,7 @@ class SSHFileSystem(AsyncFileSystem):
 
         attrs = asyncssh.SFTPAttrs(permissions=permissions)
         async with self._pool.get() as channel:
-            await channel.mkdir(path)
+            await channel.mkdir(path, attrs=attrs)
 
     @wrap_exceptions
     async def _makedirs(

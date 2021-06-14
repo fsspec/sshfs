@@ -172,6 +172,9 @@ def test_mkdir(fs, remote_dir):
     with pytest.raises(SFTPFailure):
         fs.mkdir(remote_dir + "dir/", create_parents=False)
 
+    fs.mkdir(remote_dir + "dir/sub", create_parents=False)
+    assert fs.isdir(remote_dir + "dir/sub")
+
 
 def test_makedirs(fs, remote_dir):
     fs.makedirs(remote_dir + "dir/a/b/c/")
