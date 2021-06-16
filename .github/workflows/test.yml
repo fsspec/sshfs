@@ -16,14 +16,14 @@ jobs:
 
       matrix:
         os: [ubuntu-18.04, macos-10.15]
-        pyv: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+        pyv: ["3.6", "3.7", "3.8", "3.9", "3.10.0-beta.2"]
 
     steps:
     - uses: actions/checkout@v2
 
     - uses: actions/setup-python@v2
       with:
-        python-version: '3.8'
+        python-version: ${{ matrix.pyv }}
 
     - name: Install dependencies
       run: |
