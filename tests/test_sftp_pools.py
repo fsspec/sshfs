@@ -1,9 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
 
 import pytest
 
-from sshfs.compat import AsyncExitStack
+from sshfs.compat import AsyncExitStack, asynccontextmanager
 from sshfs.pools import SFTPHardChannelPool, SFTPSoftChannelPool
 
 

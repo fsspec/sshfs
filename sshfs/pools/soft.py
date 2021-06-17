@@ -1,7 +1,7 @@
 import heapq
 from collections import Counter
-from contextlib import asynccontextmanager
 
+from sshfs.compat import asynccontextmanager
 from sshfs.pools.base import BaseSFTPChannelPool
 
 
