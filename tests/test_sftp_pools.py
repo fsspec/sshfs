@@ -1,11 +1,10 @@
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 import pytest
 
+from sshfs.compat import AsyncExitStack
 from sshfs.pools import SFTPHardChannelPool, SFTPSoftChannelPool
-
-_POLL_WAIT = 0.1
 
 
 @asynccontextmanager

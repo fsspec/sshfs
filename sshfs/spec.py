@@ -3,13 +3,14 @@ import posixpath
 import shlex
 import stat
 import weakref
-from contextlib import AsyncExitStack, suppress
+from contextlib import suppress
 from datetime import datetime
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
 from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 
+from sshfs.compat import AsyncExitStack
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
 from sshfs.utils import wrap_exceptions
