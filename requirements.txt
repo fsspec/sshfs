@@ -1,2 +1,2 @@
-fsspec==2021.05.0
+git+https://github.com/intake/fsspec.git
 asyncssh==2.6.0
