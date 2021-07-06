@@ -1,2 +1,2 @@
-git+https://github.com/intake/fsspec.git
-asyncssh==2.6.0
+fsspec @ git+https://github.com/intake/filesystem_spec/
+asyncssh==2.7.0
