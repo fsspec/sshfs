@@ -18,7 +18,7 @@ class SSHFile(io.IOBase):
 
         # TODO: support r+ / w+ / a+
         if mode not in {"rb", "wb", "ab"}:
-            raise ValueError("Unsupported file mode: {mode}")
+            raise ValueError(f"Unsupported file mode: {mode}")
 
         self.path = path
         self.mode = mode
