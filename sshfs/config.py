@@ -7,14 +7,6 @@ from asyncssh.config import SSHClientConfig
 SSH_CONFIG = Path("~", ".ssh", "config").expanduser()
 
 
-class SSHFSClientConfig(SSHClientConfig):
-    _handlers = {
-        "proxycommand": ("ProxyCommand", SSHClientConfig._set_string_list),
-        **SSHClientConfig._handlers,
-    }
-    _percent_expand = {"ProxyCommand", *SSHClientConfig._percent_expand}
-
-
 def parse_config(
     *, host, user=(), port=(), local_user=None, config_files=None
 ):
@@ -25,7 +17,7 @@ def parse_config(
         with suppress(KeyError):
             local_user = getpass.getuser()
 
-    return SSHFSClientConfig.load(
+    return SSHClientConfig.load(
         reload=False,
         last_config=None,
         config_paths=config_files,
