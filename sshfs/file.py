@@ -3,10 +3,12 @@ import io
 from asyncssh.sftp import _MAX_SFTP_REQUESTS
 from fsspec.asyn import sync
 
-from sshfs.utils import _mirror_method, wrap_exceptions
-
-# A copy of SFTP_BLOCK_SIZE (16KB)
-BASE_BLOCK_SIZE = 2 ** 14
+from sshfs.utils import (
+    READ_BLOCK_SIZE,
+    WRITE_BLOCK_SIZE,
+    _mirror_method,
+    wrap_exceptions,
+)
 
 
 class SSHFile(io.IOBase):
@@ -35,9 +37,9 @@ class SSHFile(io.IOBase):
             # we'll send 240 KB + headers for write requests)
 
             if self.readable():
-                block_size = BASE_BLOCK_SIZE * 3
+                block_size = READ_BLOCK_SIZE
             else:
-                block_size = BASE_BLOCK_SIZE * 15
+                block_size = WRITE_BLOCK_SIZE
 
         # The blocksize is often used with constructs like
         # shutil.copyfileobj(src, dst, length=file.blocksize) and since we are

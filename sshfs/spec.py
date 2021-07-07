@@ -13,7 +13,12 @@ from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
 from sshfs.compat import AsyncExitStack
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
-from sshfs.utils import as_progress_handler, wrap_exceptions
+from sshfs.utils import (
+    READ_BLOCK_SIZE,
+    WRITE_BLOCK_SIZE,
+    as_progress_handler,
+    wrap_exceptions,
+)
 
 
 class SSHFileSystem(AsyncFileSystem):
@@ -110,17 +115,32 @@ class SSHFileSystem(AsyncFileSystem):
             await self._rm_file(lpath)
 
     @wrap_exceptions
-    async def _put_file(self, lpath, rpath, callback=None, **kwargs):
+    async def _put_file(
+        self,
+        lpath,
+        rpath,
+        block_size=WRITE_BLOCK_SIZE,
+        callback=None,
+        **kwargs,
+    ):
         async with self._pool.get() as channel:
             await channel.put(
-                lpath, rpath, progress_handler=as_progress_handler(callback)
+                lpath,
+                rpath,
+                block_size=block_size,
+                progress_handler=as_progress_handler(callback),
             )
 
     @wrap_exceptions
-    async def _get_file(self, lpath, rpath, callback=None, **kwargs):
+    async def _get_file(
+        self, lpath, rpath, block_size=READ_BLOCK_SIZE, callback=None, **kwargs
+    ):
         async with self._pool.get() as channel:
             await channel.get(
-                lpath, rpath, progress_handler=as_progress_handler(callback)
+                lpath,
+                rpath,
+                block_size=block_size,
+                progress_handler=as_progress_handler(callback),
             )
 
     @wrap_exceptions
