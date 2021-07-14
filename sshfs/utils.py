@@ -6,7 +6,6 @@ from asyncssh import ProcessError
 from asyncssh.misc import PermissionDenied
 from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile
 from fsspec.asyn import sync_wrapper
-from fsspec.callbacks import as_callback
 
 _NOT_FOUND = os.strerror(errno.ENOENT)
 _FILE_EXISTS = os.strerror(errno.EEXIST)
@@ -54,15 +53,17 @@ def _mirror_method(method):
 
 
 def as_progress_handler(callback):
-    callback = as_callback(callback)
+    if callback is None:
+        return None
+
     sent_total = False
 
     def progress_handler(src_path, dst_path, absolute_progress, total_size):
         nonlocal sent_total
         if not sent_total:
-            callback.call("set_size", total_size)
+            callback.set_size(total_size)
             sent_total = True
 
-        callback.call("absolute_update", absolute_progress)
+        callback.absolute_update(absolute_progress)
 
     return progress_handler
