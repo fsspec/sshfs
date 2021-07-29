@@ -28,7 +28,6 @@ class BaseSFTPChannelPool:
         # better to the server's capacity to prevent getting too
         # many errors and wasting time on creating failed channels.
         self.max_channels = max_channels
-        self.active_channels = 0
 
         # When there are no channels available, this is the maximum amount
         # of time that the SFTPChannelPool will wait to retrieve the

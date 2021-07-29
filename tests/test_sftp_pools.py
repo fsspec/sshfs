@@ -56,15 +56,14 @@ def fake_client():
 
 
 @pytest.mark.asyncio
-@all_queues
-async def test_pool_general_queue_caching(fake_client, queue_type):
-    pool = queue_type(fake_client, poll=False)
+async def test_pool_soft_queue_caching(fake_client):
+    pool = SFTPSoftChannelPool(fake_client, poll=False)
 
     async with pool.get() as channel:
         assert channel.no == 1
         assert pool.active_channels == 1
 
-    assert pool.active_channels == 0
+    assert pool.active_channels == 1
 
     # Ensure that it won't create a new channel
     # but use the cached one since it is now free.
@@ -73,9 +72,17 @@ async def test_pool_general_queue_caching(fake_client, queue_type):
 
     assert fake_client.counter == 1
 
-    async with open_channels(pool, 5) as channels:
-        assert {channel.no for channel in channels} == {1, 2, 3, 4, 5}
-        assert pool.active_channels == 5
+    async with open_channels(pool, 4) as channels:
+        assert {channel.no for channel in channels} == {1}
+        assert pool.active_channels == 1
+
+    async with open_channels(pool, 8) as channels:
+        assert {channel.no for channel in channels} == {1, 2}
+        assert pool.active_channels == 2
+
+    async with open_channels(pool, 12) as channels:
+        assert {channel.no for channel in channels} == {1, 2, 3}
+        assert pool.active_channels == 3
 
 
 @pytest.mark.asyncio
@@ -128,9 +135,9 @@ async def test_pool_soft_queue_balancing(fake_client):
     async with pool.get() as channel_1:
         assert channel_1.no == 1
 
-    async with open_channels(pool, 6) as channels:
+    async with open_channels(pool, 18) as channels:
 
-        primaries, secondaries = channels[:4], channels[4:]
+        primaries, secondaries = channels[:16], channels[16:]
         assert {channel.no for channel in primaries} == {1, 2, 3, 4}
         assert {channel.no for channel in secondaries} == {1, 2}
 

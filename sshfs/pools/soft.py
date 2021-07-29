@@ -11,9 +11,11 @@ class SFTPSoftChannelPool(BaseSFTPChannelPool):
     channels from least used to most used. The ``.get()`` method will not block
     unlike the hard pool and no timeouts will happen on the management side."""
 
+    _THRESHOLD = 4
+
     # Placeholder to use when there are no channels in
     # the counter.
-    _NO_CHANNELS = [[None, 1]]
+    _NO_CHANNELS = [[None, _THRESHOLD + 1]]
 
     def __init__(self, *args, **kwargs):
         self._channels = Counter()
@@ -26,7 +28,7 @@ class SFTPSoftChannelPool(BaseSFTPChannelPool):
             or self._NO_CHANNELS
         )
 
-        if num_connections > 0:
+        if least_used_channel is None or num_connections >= self._THRESHOLD:
             channel = await self._maybe_new_channel()
             if channel is not None:
                 least_used_channel = channel
@@ -36,10 +38,18 @@ class SFTPSoftChannelPool(BaseSFTPChannelPool):
             raise ValueError("Can't create any SFTP connections!")
 
         self._channels[least_used_channel] += 1
-        self.active_channels += 1
-        yield least_used_channel
-        self._channels[least_used_channel] -= 1
-        self.active_channels -= 1
+        try:
+            yield least_used_channel
+        finally:
+            self._channels[least_used_channel] -= 1
 
     async def _cleanup(self):
         self._channels.clear()
+
+    @property
+    def active_channels(self):
+        return len(self._channels)
+
+    @active_channels.setter
+    def active_channels(self, value):
+        return None

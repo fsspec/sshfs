@@ -288,3 +288,20 @@ def test_put_file(fs, remote_dir):
 
     with fs.open(remote_dir + "/a.txt") as stream:
         assert stream.read() == b"data"
+
+
+def test_concurrency_for_raw_commands(fs, remote_dir):
+    with fs.open(remote_dir + "/cp_data", "wb") as stream:
+        stream.write(b"hello!")
+
+    with futures.ThreadPoolExecutor() as executor:
+        cp_futures = [
+            executor.submit(
+                fs.cp_file,
+                remote_dir + "/cp_data",
+                remote_dir + f"/cp_data_{index}_{secrets.token_hex(16)}",
+            )
+            for index in range(16)
+        ]
+        for future in futures.as_completed(cp_futures):
+            future.result()

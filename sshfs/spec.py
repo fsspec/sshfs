@@ -2,13 +2,20 @@ import asyncio
 import posixpath
 import shlex
 import stat
+import threading
 import weakref
 from contextlib import suppress
 from datetime import datetime
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
-from fsspec.asyn import AsyncFileSystem, sync, sync_wrapper
+from fsspec.asyn import (
+    AsyncFileSystem,
+    async_methods,
+    fsspec_loop,
+    sync,
+    sync_wrapper,
+)
 
 from sshfs.compat import AsyncExitStack
 from sshfs.file import SSHFile
@@ -19,6 +26,13 @@ from sshfs.utils import (
     as_progress_handler,
     wrap_exceptions,
 )
+
+async_methods.append("_mv")
+
+# Always allocate 2 channels for shell operations
+# and the rest (generally 8) for SFTP.
+_SHELL_CHANNELS = 2
+_DEFAULT_MAX_SESSIONS = 10
 
 
 class SSHFileSystem(AsyncFileSystem):
@@ -34,19 +48,33 @@ class SSHFileSystem(AsyncFileSystem):
         _client_args = kwargs.copy()
         _client_args.setdefault("known_hosts", None)
 
-        self._stack = AsyncExitStack()
+        max_sessions = kwargs.get("max_sessions", _DEFAULT_MAX_SESSIONS)
+        assert max_sessions > _SHELL_CHANNELS
+
+        with fsspec_loop():
+            self._stack = AsyncExitStack()
+            # This might not be thread-safe, though fsspec should probably
+            # handle those cases on it's loop.
+            self._client_lock = asyncio.Semaphore(_SHELL_CHANNELS)
+
+        self.active_executors = 0
         self._client, self._pool = self.connect(
-            host, pool_type, **_client_args
+            host,
+            pool_type,
+            max_sftp_channels=max_sessions - _SHELL_CHANNELS,
+            **_client_args,
         )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
         )
 
     @wrap_exceptions
-    async def _connect(self, host, pool_type, **client_args):
+    async def _connect(
+        self, host, pool_type, max_sftp_channels, **client_args
+    ):
         _raw_client = asyncssh.connect(host, **client_args)
         client = await self._stack.enter_async_context(_raw_client)
-        pool = pool_type(client)
+        pool = pool_type(client, max_channels=max_sftp_channels)
         return client, pool
 
     connect = sync_wrapper(_connect)
@@ -146,7 +174,7 @@ class SSHFileSystem(AsyncFileSystem):
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
-        await self.client.run(cmd, check=True)
+        await self._execute(cmd)
 
     @wrap_exceptions
     async def _ls(self, path, detail=False, **kwargs):
@@ -238,7 +266,7 @@ class SSHFileSystem(AsyncFileSystem):
             raise ValueError(f"{system!r} doesn't support checksum operation")
 
         cmd = f"{command} {shlex.quote(path)}"
-        result = await self.client.run(cmd, check=True)
+        result = await self._execute(cmd)
 
         parts = result.stdout.strip().split()
         assert len(parts) >= 1
@@ -249,11 +277,18 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _get_system(self):
-        result = await self.client.run("uname", check=True)
+        result = await self._execute("uname")
         return result.stdout.strip()
 
     checksum = sync_wrapper(_checksum)
     get_system = sync_wrapper(_get_system)
+
+    async def _execute(self, *args, **kwargs):
+        """Execute a command on the remote system
+        under a session-wide lock"""
+        kwargs.setdefault("check", True)
+        async with self._client_lock:
+            return await self.client.run(*args, **kwargs)
 
     def _open(self, path, *args, **kwargs):
         return SSHFile(self, path, *args, **kwargs)

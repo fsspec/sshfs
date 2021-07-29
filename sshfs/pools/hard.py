@@ -14,6 +14,7 @@ class SFTPHardChannelPool(BaseSFTPChannelPool):
     def __init__(self, *args, **kwargs):
         self._queue = asyncio.Queue(0)
         self._poll = kwargs.pop("poll", True)
+        self.active_channels = 0
         super().__init__(*args, **kwargs)
 
     @asynccontextmanager
@@ -34,9 +35,11 @@ class SFTPHardChannelPool(BaseSFTPChannelPool):
                 channel = self._queue.get_nowait()
 
         self.active_channels += 1
-        yield channel
-        self.active_channels -= 1
-        self._queue.put_nowait(channel)
+        try:
+            yield channel
+        finally:
+            self.active_channels -= 1
+            self._queue.put_nowait(channel)
 
     async def _cleanup(self):
         while not self._queue.empty():
