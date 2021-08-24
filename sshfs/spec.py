@@ -290,5 +290,7 @@ class SSHFileSystem(AsyncFileSystem):
         async with self._client_lock:
             return await self.client.run(*args, **kwargs)
 
+    execute = sync_wrapper(_execute)
+
     def _open(self, path, *args, **kwargs):
         return SSHFile(self, path, *args, **kwargs)
