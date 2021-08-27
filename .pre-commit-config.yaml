@@ -10,3 +10,10 @@ repos:
     hooks:
     -   id: isort
         additional_dependencies: [toml]
+-   repo: https://github.com/executablebooks/mdformat/
+    rev: 0.7.5
+    hooks:
+    -   id: mdformat
+        additional_dependencies:
+        - mdformat-black
+        - mdformat_tables

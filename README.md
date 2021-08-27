@@ -4,6 +4,7 @@ sshfs is an implementation of [fsspec](https://github.com/intake/filesystem_spec
 the SFTP protocol using [asyncssh](https://github.com/ronf/asyncssh).
 
 ## Features
+
 - A complete implementation of the fsspec protocol through SFTP
 - Supports features outside of the SFTP (e.g server side copy through SSH command execution)
 - Quite fast (compared to alternatives like paramiko)
@@ -13,6 +14,7 @@ the SFTP protocol using [asyncssh](https://github.com/ronf/asyncssh).
 ## Tutorial
 
 Install the `sshfs` from PyPI or the conda-forge, and import it;
+
 ```py
 from sshfs import SSHFileSystem
 ```
@@ -72,6 +74,7 @@ b'super secret messsage!'
 ```
 
 There are also a lot of other basic filesystem operations, such as `mkdir`, `touch` and `find`;
+
 ```py
 >>> fs.mkdir('/tmp/dir')
 >>> fs.mkdir('/tmp/dir/eggs')
@@ -85,8 +88,8 @@ There are also a lot of other basic filesystem operations, such as `mkdir`, `tou
 /tmp/dir/spam
 ```
 
-
 If you want to list a directory but not it's children, you can use `ls()`;
+
 ```py
 >>> [(detail['name'], detail['type']) for detail in fs.ls('/tmp/dir', detail=True)]
 [('/tmp/dir/spam', 'file'), ('/tmp/dir/eggs', 'directory')]
