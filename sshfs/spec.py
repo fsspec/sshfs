@@ -43,6 +43,22 @@ class SSHFileSystem(AsyncFileSystem):
         pool_type=SFTPSoftChannelPool,
         **kwargs,
     ):
+        """
+        Implementation of the SFTP/SSH protocols for the fsspec.
+
+        Parameters
+        ----------
+        host: str
+            SSH host to connect.
+        **kwargs: Any
+            Any option that will be passed to either the top level `AsyncFileSystem`
+            or the `asyncssh.connect`.
+        pool_type: sshfs.pools.base.BaseSFTPChannelPool
+            Pool manager to use (when doing concurrent operations together,
+            pool managers offer the flexibility of prioritizing channels
+            and deciding which to use).
+        """
+
         super().__init__(self, **kwargs)
 
         _client_args = kwargs.copy()
@@ -284,8 +300,8 @@ class SSHFileSystem(AsyncFileSystem):
     get_system = sync_wrapper(_get_system)
 
     async def _execute(self, *args, **kwargs):
-        """Execute a command on the remote system
-        under a session-wide lock"""
+        """Execute a shell command on the host system
+        and return the result."""
         kwargs.setdefault("check", True)
         async with self._client_lock:
             return await self.client.run(*args, **kwargs)
