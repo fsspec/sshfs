@@ -66,6 +66,11 @@ def fs_hard_queue(ssh_server, user="user"):
     )
 
 
+def strip_keys(info):
+    for key in ["name", "time", "mtime", "atime"]:
+        info.pop(key, None)
+
+
 def test_info(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
@@ -107,9 +112,7 @@ def test_copy(fs, remote_dir):
     assert fs.exists(remote_dir + "/a.txt")
     assert fs.exists(remote_dir + "/b.txt")
 
-    initial_info.pop("name")
-    secondary_info.pop("name")
-    assert initial_info == secondary_info
+    assert strip_keys(initial_info) == strip_keys(secondary_info)
 
 
 def test_rm(fs, remote_dir):
