@@ -283,13 +283,14 @@ def test_concurrent_operations(fs, remote_dir):
         assert write_names == read_names
 
 
-def test_put_file(fs, remote_dir):
+@pytest.mark.parametrize("file_path", ["a.txt", "dir/a.txt"])
+def test_put_file(fs, remote_dir, file_path):
     with tempfile.NamedTemporaryFile() as file:
         file.file.write(b"data")
         file.file.flush()
-        fs.put_file(file.name, remote_dir + "/a.txt")
+        fs.put_file(file.name, remote_dir + f"/{file_path}")
 
-    with fs.open(remote_dir + "/a.txt") as stream:
+    with fs.open(remote_dir + f"/{file_path}") as stream:
         assert stream.read() == b"data"
 
 

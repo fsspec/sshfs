@@ -167,6 +167,7 @@ class SSHFileSystem(AsyncFileSystem):
         callback=None,
         **kwargs,
     ):
+        await self._makedirs(self._parent(rpath), exist_ok=True)
         async with self._pool.get() as channel:
             await channel.put(
                 lpath,
