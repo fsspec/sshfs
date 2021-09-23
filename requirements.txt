@@ -1,2 +1,0 @@
-fsspec @ git+https://github.com/intake/filesystem_spec/
-asyncssh==2.7.0
