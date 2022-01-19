@@ -4,7 +4,7 @@ import shlex
 import stat
 import threading
 import weakref
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from datetime import datetime
 
 import asyncssh
@@ -17,7 +17,6 @@ from fsspec.asyn import (
     sync_wrapper,
 )
 
-from sshfs.compat import AsyncExitStack
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
 from sshfs.utils import (

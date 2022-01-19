@@ -1,9 +1,7 @@
 import asyncio
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 
 from asyncssh.misc import ChannelOpenError
-
-from sshfs.compat import AsyncExitStack
 
 MAX_TIMEOUT = 60 * 60 * 3
 

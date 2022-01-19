@@ -1,6 +1,6 @@
 import asyncio
+from contextlib import asynccontextmanager
 
-from sshfs.compat import asynccontextmanager
 from sshfs.pools.base import BaseSFTPChannelPool
 
 
