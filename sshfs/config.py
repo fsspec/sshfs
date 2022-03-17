@@ -17,12 +17,15 @@ def parse_config(
         with suppress(KeyError):
             local_user = getpass.getuser()
 
+    last_config = None
+    reload = False
+
     return SSHClientConfig.load(
-        reload=False,
-        last_config=None,
-        config_paths=config_files,
-        local_user=local_user,
-        user=user,
-        host=host,
-        port=port,
+        last_config,
+        config_files,
+        reload,
+        local_user,
+        user,
+        host,
+        port,
     )
