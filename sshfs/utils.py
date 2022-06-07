@@ -11,7 +11,7 @@ _NOT_FOUND = os.strerror(errno.ENOENT)
 _FILE_EXISTS = os.strerror(errno.EEXIST)
 
 # A copy of SFTP_BLOCK_SIZE (16KB)
-BASE_BLOCK_SIZE = 2 ** 14
+BASE_BLOCK_SIZE = 2**14
 
 # Most of the SFTP implementations support reading a 64kb
 # and writing a 256kb chunk at a single request. We'll set
