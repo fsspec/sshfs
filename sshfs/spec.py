@@ -9,13 +9,7 @@ from datetime import datetime
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
-from fsspec.asyn import (
-    AsyncFileSystem,
-    async_methods,
-    fsspec_loop,
-    sync,
-    sync_wrapper,
-)
+from fsspec.asyn import AsyncFileSystem, async_methods, sync, sync_wrapper
 
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
@@ -66,12 +60,7 @@ class SSHFileSystem(AsyncFileSystem):
         max_sessions = kwargs.get("max_sessions", _DEFAULT_MAX_SESSIONS)
         assert max_sessions > _SHELL_CHANNELS
 
-        with fsspec_loop():
-            self._stack = AsyncExitStack()
-            # This might not be thread-safe, though fsspec should probably
-            # handle those cases on it's loop.
-            self._client_lock = asyncio.Semaphore(_SHELL_CHANNELS)
-
+        self._stack = AsyncExitStack()
         self.active_executors = 0
         self._client, self._pool = self.connect(
             host,
@@ -87,6 +76,8 @@ class SSHFileSystem(AsyncFileSystem):
     async def _connect(
         self, host, pool_type, max_sftp_channels, **client_args
     ):
+        self._client_lock = asyncio.Semaphore(_SHELL_CHANNELS)
+
         _raw_client = asyncssh.connect(host, **client_args)
         client = await self._stack.enter_async_context(_raw_client)
         pool = pool_type(client, max_channels=max_sftp_channels)
