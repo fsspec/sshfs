@@ -2,7 +2,6 @@ import asyncio
 import posixpath
 import shlex
 import stat
-import threading
 import weakref
 from contextlib import AsyncExitStack, suppress
 from datetime import datetime
@@ -44,8 +43,8 @@ class SSHFileSystem(AsyncFileSystem):
         host: str
             SSH host to connect.
         **kwargs: Any
-            Any option that will be passed to either the top level `AsyncFileSystem`
-            or the `asyncssh.connect`.
+            Any option that will be passed to either the top level
+            `AsyncFileSystem` or the `asyncssh.connect`.
         pool_type: sshfs.pools.base.BaseSFTPChannelPool
             Pool manager to use (when doing concurrent operations together,
             pool managers offer the flexibility of prioritizing channels
@@ -54,11 +53,13 @@ class SSHFileSystem(AsyncFileSystem):
 
         super().__init__(self, **kwargs)
 
+        max_sessions = kwargs.pop("max_sessions", _DEFAULT_MAX_SESSIONS)
+        if max_sessions <= _SHELL_CHANNELS:
+            raise ValueError(
+                f"max_sessions must be greater than {_SHELL_CHANNELS}"
+            )
         _client_args = kwargs.copy()
         _client_args.setdefault("known_hosts", None)
-
-        max_sessions = kwargs.get("max_sessions", _DEFAULT_MAX_SESSIONS)
-        assert max_sessions > _SHELL_CHANNELS
 
         self._stack = AsyncExitStack()
         self.active_executors = 0
