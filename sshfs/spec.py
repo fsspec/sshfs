@@ -9,6 +9,7 @@ from datetime import datetime
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
 from fsspec.asyn import AsyncFileSystem, async_methods, sync, sync_wrapper
+from fsspec.utils import infer_storage_options
 
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
@@ -72,6 +73,17 @@ class SSHFileSystem(AsyncFileSystem):
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
         )
+
+    @classmethod
+    def _strip_protocol(cls, path):
+        return infer_storage_options(path)["path"]
+
+    @staticmethod
+    def _get_kwargs_from_urls(urlpath):
+        out = infer_storage_options(urlpath)
+        out.pop("path", None)
+        out.pop("protocol", None)
+        return out
 
     @wrap_exceptions
     async def _connect(
