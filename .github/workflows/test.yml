@@ -5,6 +5,9 @@ on:
   pull_request:
     branches:
       - '*'
+  schedule:
+    - cron: '5 1 * * *'
+  workflow_dispatch:
 
 name: Tests
 
