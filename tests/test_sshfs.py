@@ -6,6 +6,7 @@ import warnings
 from concurrent import futures
 from datetime import datetime, timedelta
 from pathlib import Path
+import fsspec
 
 import pytest
 from asyncssh.sftp import SFTPFailure
@@ -69,6 +70,19 @@ def fs_hard_queue(ssh_server, user="user"):
 def strip_keys(info):
     for key in ["name", "time", "mtime", "atime"]:
         info.pop(key, None)
+
+
+def test_fsspec_registration(fs, ssh_server, remote_dir, user="user"):
+    """Check that we can use sshfs with fsspec.open and an ssh url."""
+    path = remote_dir + "/a.txt"
+
+    # Additional options like client_keys need to be passed to open.
+    url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{path}"
+    with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
+        file.write("Anything")
+
+    with fs.open(path, "r") as file:
+        assert file.read() == "Anything"
 
 
 def test_info(fs, remote_dir):
