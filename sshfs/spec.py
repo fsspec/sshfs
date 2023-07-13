@@ -76,7 +76,9 @@ class SSHFileSystem(AsyncFileSystem):
 
     @classmethod
     def _strip_protocol(cls, path):
-        return infer_storage_options(path)["path"]
+        # Remove components such as host and username from path.
+        inferred_path = infer_storage_options(path)["path"]
+        return super()._strip_protocol(inferred_path)
 
     @staticmethod
     def _get_kwargs_from_urls(urlpath):
