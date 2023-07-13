@@ -6,8 +6,8 @@ import warnings
 from concurrent import futures
 from datetime import datetime, timedelta
 from pathlib import Path
-import fsspec
 
+import fsspec
 import pytest
 from asyncssh.sftp import SFTPFailure
 
