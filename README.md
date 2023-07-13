@@ -13,7 +13,20 @@ the SFTP protocol using [asyncssh](https://github.com/ronf/asyncssh).
 
 ## Tutorial
 
-Install the `sshfs` from PyPI or the conda-forge, and import it;
+Install the `sshfs` from PyPI or the conda-forge. This will install `fsspec`
+and register `sshfs` for `ssh://` urls, so you can open files using:
+
+```py
+from fsspec import open
+
+with open('ssh://[user@]host[:port]/path/to/file', "w") as file:
+    file.write("Hello World!")
+
+with open('ssh://[user@]host[:port]/path/to/file', "r") as file:
+    print(file.read())
+```
+
+For more operations, you can use the `SSHFileSystem` class directly:
 
 ```py
 from sshfs import SSHFileSystem
@@ -43,6 +56,8 @@ fs = SSHFileSystem(
 )
 ```
 
+Note: you can also pass `client_keys` as an argument to `fsspec.open`.
+
 All operations and their descriptions are specified [here](https://filesystem-spec.readthedocs.io/en/latest/api.html#fsspec.spec.AbstractFileSystem).
 Here are a few example calls you can make, starting with `info()` which allows you to retrieve the metadata about given path;
 
@@ -61,7 +76,7 @@ You can also create new files through either putting a local file with `put_file
 ```py
 >>> with fs.open('/tmp/message.dat', 'wb') as stream:
 ...     stream.write(b'super secret messsage!')
-... 
+...
 ```
 
 And either download it through `get_file` or simply read it on the fly with opening it;
@@ -69,7 +84,7 @@ And either download it through `get_file` or simply read it on the fly with open
 ```py
 >>> with fs.open('/tmp/message.dat') as stream:
 ...     print(stream.read())
-... 
+...
 b'super secret messsage!'
 ```
 
@@ -80,10 +95,10 @@ There are also a lot of other basic filesystem operations, such as `mkdir`, `tou
 >>> fs.mkdir('/tmp/dir/eggs')
 >>> fs.touch('/tmp/dir/spam')
 >>> fs.touch('/tmp/dir/eggs/quux')
->>> 
+>>>
 >>> for file in fs.find('/tmp/dir'):
 ...     print(file)
-... 
+...
 /tmp/dir/eggs/quux
 /tmp/dir/spam
 ```
