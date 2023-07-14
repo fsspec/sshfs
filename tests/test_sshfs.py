@@ -7,6 +7,7 @@ from concurrent import futures
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import fsspec
 import pytest
 from asyncssh.sftp import SFTPFailure
 
@@ -69,6 +70,31 @@ def fs_hard_queue(ssh_server, user="user"):
 def strip_keys(info):
     for key in ["name", "time", "mtime", "atime"]:
         info.pop(key, None)
+
+
+def test_fsspec_registration(ssh_server):
+    fs = fsspec.filesystem(
+        "ssh",
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username="user",
+        client_keys=[USERS["user"]],
+    )
+    assert isinstance(fs, SSHFileSystem)
+
+
+def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
+    url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
+    with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
+        # Check the underlying file system.
+        file_fs = file.buffer.fs
+        assert isinstance(file_fs, SSHFileSystem)
+        assert file_fs.storage_options == {
+            "host": ssh_server.host,
+            "port": ssh_server.port,
+            "username": user,
+            "client_keys": [USERS[user]],
+        }
 
 
 def test_info(fs, remote_dir):
