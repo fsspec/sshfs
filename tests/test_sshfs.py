@@ -83,10 +83,10 @@ def test_fsspec_registration(fs, ssh_server, remote_dir, user="user"):
         file_fs = file.buffer.fs
         assert isinstance(file_fs, SSHFileSystem)
         assert file_fs.storage_options == {
-            'host': ssh_server.host,
-            'port': ssh_server.port,
-            'username': user,
-            'client_keys': [USERS[user]],
+            "host": ssh_server.host,
+            "port": ssh_server.port,
+            "username": user,
+            "client_keys": [USERS[user]],
         }
         # Write something.
         file.write("Anything")
