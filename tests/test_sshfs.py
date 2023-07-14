@@ -84,8 +84,7 @@ def test_fsspec_registration(ssh_server):
 
 
 def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
-    path = remote_dir + "/a.txt"
-    url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{path}"
+    url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
     with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
         # Check the underlying file system.
         file_fs = file.buffer.fs
