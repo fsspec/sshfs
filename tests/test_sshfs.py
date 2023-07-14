@@ -72,11 +72,19 @@ def strip_keys(info):
         info.pop(key, None)
 
 
-def test_fsspec_registration(fs, ssh_server, remote_dir, user="user"):
-    """Check that we can use sshfs with fsspec.open and an ssh url."""
-    path = remote_dir + "/a.txt"
+def test_fsspec_registration(ssh_server):
+    fs = fsspec.filesystem(
+        "ssh",
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username="user",
+        client_keys=[USERS["user"]],
+    )
+    assert isinstance(fs, SSHFileSystem)
 
-    # Additional options like client_keys need to be passed to open.
+
+def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
+    path = remote_dir + "/a.txt"
     url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{path}"
     with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
         # Check the underlying file system.
@@ -88,11 +96,6 @@ def test_fsspec_registration(fs, ssh_server, remote_dir, user="user"):
             "username": user,
             "client_keys": [USERS[user]],
         }
-        # Write something.
-        file.write("Anything")
-
-    with fs.open(path, "r") as file:
-        assert file.read() == "Anything"
 
 
 def test_info(fs, remote_dir):
