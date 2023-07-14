@@ -79,6 +79,16 @@ def test_fsspec_registration(fs, ssh_server, remote_dir, user="user"):
     # Additional options like client_keys need to be passed to open.
     url = f"ssh://{user}@{ssh_server.host}:{ssh_server.port}/{path}"
     with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
+        # Check the underlying file system.
+        file_fs = file.buffer.fs
+        assert isinstance(file_fs, SSHFileSystem)
+        assert file_fs.storage_options == {
+            'host': ssh_server.host,
+            'port': ssh_server.port,
+            'username': user,
+            'client_keys': [USERS[user]],
+        }
+        # Write something.
         file.write("Anything")
 
     with fs.open(path, "r") as file:
