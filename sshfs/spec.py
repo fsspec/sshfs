@@ -57,8 +57,10 @@ class SSHFileSystem(AsyncFileSystem):
         super().__init__(self, **kwargs)
 
         _sftp_client_args = {
-            k: kwargs.pop(k) for k in kwargs.copy().keys()
-            if k in {
+            k: kwargs.pop(k)
+            for k in kwargs.copy().keys()
+            if k
+            in {
                 "env",
                 "send_env",
                 "path_encoding",
@@ -104,13 +106,20 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _connect(
-        self, host, pool_type, max_sftp_channels, connect_args, sftp_client_args
+        self,
+        host,
+        pool_type,
+        max_sftp_channels,
+        connect_args,
+        sftp_client_args,
     ):
         self._client_lock = asyncio.Semaphore(_SHELL_CHANNELS)
 
         _raw_client = asyncssh.connect(host, **connect_args)
         client = await self._stack.enter_async_context(_raw_client)
-        pool = pool_type(client, max_channels=max_sftp_channels, **sftp_client_args)
+        pool = pool_type(
+            client, max_channels=max_sftp_channels, **sftp_client_args
+        )
         return client, pool
 
     connect = sync_wrapper(_connect)
