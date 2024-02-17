@@ -38,6 +38,19 @@ class BaseSFTPChannelPool:
         self.unsafe_terminate = unsafe_terminate
         self._stack = AsyncExitStack()
 
+        self.sftp_client_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            in {
+                "env",
+                "send_env",
+                "path_encoding",
+                "path_errors",
+                "sftp_version",
+            }
+        }
+
     async def _maybe_new_channel(self):
         # If there is no hard limit or the limit is not hit yet
         # try to create a new channel
@@ -47,7 +60,7 @@ class BaseSFTPChannelPool:
         ):
             try:
                 return await self._stack.enter_async_context(
-                    self.client.start_sftp_client()
+                    self.client.start_sftp_client(**self.sftp_client_kwargs)
                 )
             except ChannelOpenError:
                 # If we can't create any more channels, then change
