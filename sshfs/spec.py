@@ -137,6 +137,7 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _info(self, path, **kwargs):
+        path = self._strip_protocol(path)
         async with self._pool.get() as channel:
             attributes = await channel.stat(path)
 
