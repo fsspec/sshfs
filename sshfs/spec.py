@@ -319,10 +319,9 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _cat_file(self, path, **kwargs):
-        """ Asynchronously fetch the contents of a file """
+        """Asynchronously fetch the contents of a file"""
         async with self._pool.get() as channel:
-            async with channel.open(path, 'rb') as f:
+            async with channel.open(path, "rb") as f:
                 return await f.read()
 
     cat_file = sync_wrapper(_cat_file)
-
