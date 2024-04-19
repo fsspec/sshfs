@@ -148,6 +148,13 @@ class SSHFileSystem(AsyncFileSystem):
         return info
 
     @wrap_exceptions
+    async def _modified(self, path: str, **kwargs) -> datetime:
+        path_info = await self._info(path)
+        return path_info["mtime"]
+
+    modified = sync_wrapper(_modified)
+
+    @wrap_exceptions
     async def _mv(self, lpath, rpath, **kwargs):
         async with self._pool.get() as channel:
             with suppress(SFTPOpUnsupported):
