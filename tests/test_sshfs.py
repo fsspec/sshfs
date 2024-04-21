@@ -341,15 +341,17 @@ def test_concurrency_for_raw_commands(fs, remote_dir):
 
 def test_cat_file_sync(fs, remote_dir):
     # Define the content to write to the test file
-    test_content = b'Test content for cat_file'
+    test_content = b"Test content for cat_file"
     test_file_path = remote_dir + "/test_file.txt"
 
     # Write content to the file synchronously
-    with open(test_file_path, 'wb') as f:
+    with open(test_file_path, "wb") as f:
         f.write(test_content)
 
     # Use the cat_file method to read the content back synchronously
     read_content = fs.cat_file(test_file_path)
 
     # Verify the content read is the same as the content written
-    assert read_content == test_content, "The content read from the file does not match the content written."
+    assert (
+        read_content == test_content
+    ), "The content read from the file does not match the content written."
