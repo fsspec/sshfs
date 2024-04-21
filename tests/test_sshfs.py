@@ -345,9 +345,8 @@ def test_cat_file_sync(fs, remote_dir):
     test_file_path = remote_dir + "/test_file.txt"
 
     # Write content to the file synchronously
-    with fs._pool.get() as channel:
-        with channel.open(test_file_path, 'wb') as f:
-            f.write(test_content)
+    with open(test_file_path, 'wb') as f:
+        f.write(test_content)
 
     # Use the cat_file method to read the content back synchronously
     read_content = fs.cat_file(test_file_path)
