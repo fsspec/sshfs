@@ -323,5 +323,3 @@ class SSHFileSystem(AsyncFileSystem):
         async with self._pool.get() as channel:
             async with channel.open(path, "rb") as f:
                 return await f.read()
-
-    cat_file = sync_wrapper(_cat_file)
