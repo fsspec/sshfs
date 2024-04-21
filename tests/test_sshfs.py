@@ -339,19 +339,18 @@ def test_concurrency_for_raw_commands(fs, remote_dir):
             future.result()
 
 
-@pytest.mark.asyncio
-async def test_cat_file(fs, remote_dir):
+def test_cat_file_sync(fs, remote_dir):
     # Define the content to write to the test file
-    test_content = b'Test content for _cat_file'
+    test_content = b'Test content for cat_file'
     test_file_path = remote_dir + "/test_file.txt"
 
-    # Write content to the file asynchronously
-    async with fs._pool.get() as channel:
-        async with channel.open(test_file_path, 'wb') as f:
-            await f.write(test_content)
+    # Write content to the file synchronously
+    with fs._pool.get() as channel:
+        with channel.open(test_file_path, 'wb') as f:
+            f.write(test_content)
 
-    # Use the _cat_file method to read the content back
-    read_content = await fs._cat_file(test_file_path)
+    # Use the cat_file method to read the content back synchronously
+    read_content = fs.cat_file(test_file_path)
 
     # Verify the content read is the same as the content written
     assert read_content == test_content, "The content read from the file does not match the content written."
