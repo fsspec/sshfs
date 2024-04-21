@@ -316,3 +316,10 @@ class SSHFileSystem(AsyncFileSystem):
 
     def _open(self, path, *args, **kwargs):
         return SSHFile(self, path, *args, **kwargs)
+
+    @wrap_exceptions
+    async def _cat_file(self, path, **kwargs):
+        """Asynchronously fetch the contents of a file"""
+        async with self._pool.get() as channel:
+            async with channel.open(path, "rb") as f:
+                return await f.read()
