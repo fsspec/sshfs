@@ -4,6 +4,7 @@ import secrets
 import tempfile
 import warnings
 from concurrent import futures
+from datetime import datetime
 from pathlib import Path
 
 import fsspec
@@ -337,6 +338,11 @@ def test_concurrency_for_raw_commands(fs, remote_dir):
         ]
         for future in futures.as_completed(cp_futures):
             future.result()
+
+
+def test_modified(fs, remote_dir):
+    modified = fs.modified(remote_dir)
+    assert isinstance(modified, datetime)
 
 
 def test_cat_file_sync(fs, remote_dir):
