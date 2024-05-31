@@ -338,9 +338,9 @@ class SSHFileSystem(AsyncFileSystem):
         await self._makedirs(self._parent(path), exist_ok=True)
 
         async with self._pool.get() as channel:
-            async with channel.open(path, 'wb') as f:
+            async with channel.open(path, "wb") as f:
                 for i in range(0, len(data), chunksize):
-                    chunk = data[i:i + chunksize]
+                    chunk = data[i : i + chunksize]
                     await f.write(chunk)
                     await f.flush()
 
