@@ -336,7 +336,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _pipe_file(self, path, data, chunksize=50 * 2**20, **kwargs):
         """Asynchronously writes the given data to a remote file in chunks."""
         await self._makedirs(self._parent(path), exist_ok=True)
-        
+
         async with self._pool.get() as channel:
             async with channel.open(path, 'wb') as f:
                 for i in range(0, len(data), chunksize):
@@ -346,4 +346,3 @@ class SSHFileSystem(AsyncFileSystem):
 
         self.invalidate_cache(path)
 
-    pipe_file = sync_wrapper(_pipe_file)
