@@ -345,4 +345,3 @@ class SSHFileSystem(AsyncFileSystem):
                     await f.flush()
 
         self.invalidate_cache(path)
-
