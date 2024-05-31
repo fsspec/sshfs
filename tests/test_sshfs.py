@@ -87,7 +87,9 @@ def test_fsspec_registration(ssh_server):
 
 def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
     for ep in pkg_resources.iter_entry_points(group="fsspec.specs"):
-        url = f"{ep.name}://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
+        url = (
+            f"{ep.name}://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
+        )
         with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
             # Check the underlying file system.
             file_fs = file.buffer.fs
@@ -296,7 +298,6 @@ def test_concurrent_operations(fs, remote_dir):
             return stream.read()
 
     with futures.ThreadPoolExecutor() as executor:
-
         write_futures, _ = futures.wait(
             [executor.submit(create_random_file) for _ in range(64)],
             return_when=futures.ALL_COMPLETED,
@@ -370,4 +371,6 @@ def test_pipe_file(fs, remote_dir):
     fs.pipe_file(test_file_path, test_data)
 
     with fs.open(test_file_path, "rb") as f:
-        assert f.read() == test_data, "The data read from the file does not match the data written."
+        assert (
+            f.read() == test_data
+        ), "The data read from the file does not match the data written."
