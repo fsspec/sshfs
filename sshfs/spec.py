@@ -342,6 +342,5 @@ class SSHFileSystem(AsyncFileSystem):
                 for i in range(0, len(data), chunksize):
                     chunk = data[i : i + chunksize]
                     await f.write(chunk)
-                    await f.flush()
 
         self.invalidate_cache(path)
