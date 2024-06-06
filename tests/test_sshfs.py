@@ -296,7 +296,6 @@ def test_concurrent_operations(fs, remote_dir):
             return stream.read()
 
     with futures.ThreadPoolExecutor() as executor:
-
         write_futures, _ = futures.wait(
             [executor.submit(create_random_file) for _ in range(64)],
             return_when=futures.ALL_COMPLETED,
@@ -361,3 +360,15 @@ def test_cat_file_sync(fs, remote_dir):
     assert (
         read_content == test_content
     ), "The content read from the file does not match the content written."
+
+
+def test_pipe_file(fs, remote_dir):
+    test_data = b"Test data for pipe_file" * (2**20)  # 1 MB of test data
+    test_file_path = remote_dir + "/test_pipe_file.txt"
+
+    fs.pipe_file(test_file_path, test_data)
+
+    with fs.open(test_file_path, "rb") as f:
+        assert (
+            f.read() == test_data
+        ), "The data read from the file does not match the data written."
