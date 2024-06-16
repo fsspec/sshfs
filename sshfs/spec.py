@@ -35,7 +35,7 @@ class SSHFileSystem(AsyncFileSystem):
         host,
         *,
         pool_type=SFTPSoftChannelPool,
-        sftp_client_args: Optional[dict] = None,
+        sftp_client_kwargs: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -53,7 +53,7 @@ class SSHFileSystem(AsyncFileSystem):
             Pool manager to use (when doing concurrent operations together,
             pool managers offer the flexibility of prioritizing channels
             and deciding which to use).
-        sftp_client_args: Optional[dict]
+        sftp_client_kwargs: Optional[dict]
             Parameters to pass to asyncssh.SSHClientConnection.start_sftp_client method 
             (e.g. env, send_env, path_encoding, path_errors, sftp_version).
         """
@@ -77,7 +77,7 @@ class SSHFileSystem(AsyncFileSystem):
             max_sftp_channels=max_sessions - _SHELL_CHANNELS,
             timeout=_timeout,  # goes to sync_wrapper
             connect_args=_client_args,  # for asyncssh.connect
-            sftp_client_args=sftp_client_args or {},  # for asyncssh.SSHClientConnection.start_sftp_client
+            sftp_client_args=sftp_client_kwargs or {},  # for asyncssh.SSHClientConnection.start_sftp_client
         )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
@@ -103,14 +103,14 @@ class SSHFileSystem(AsyncFileSystem):
         pool_type,
         max_sftp_channels,
         connect_args,
-        sftp_client_args,
+        sftp_client_kwargs,
     ):
         self._client_lock = asyncio.Semaphore(_SHELL_CHANNELS)
 
         _raw_client = asyncssh.connect(host, **connect_args)
         client = await self._stack.enter_async_context(_raw_client)
         pool = pool_type(
-            client, max_channels=max_sftp_channels, **sftp_client_args
+            client, max_channels=max_sftp_channels, **sftp_client_kwargs
         )
         return client, pool
 
