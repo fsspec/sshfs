@@ -77,7 +77,7 @@ class SSHFileSystem(AsyncFileSystem):
             max_sftp_channels=max_sessions - _SHELL_CHANNELS,
             timeout=_timeout,  # goes to sync_wrapper
             connect_args=_client_args,  # for asyncssh.connect
-            sftp_client_args=sftp_client_kwargs or {},  # for asyncssh.SSHClientConnection.start_sftp_client
+            sftp_client_kwargs=sftp_client_kwargs or {},  # for asyncssh.SSHClientConnection.start_sftp_client
         )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
