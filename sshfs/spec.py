@@ -111,7 +111,9 @@ class SSHFileSystem(AsyncFileSystem):
         _raw_client = asyncssh.connect(host, **connect_args)
         client = await self._stack.enter_async_context(_raw_client)
         pool = pool_type(
-            client, max_channels=max_sftp_channels, **sftp_client_kwargs
+            client,
+            max_channels=max_sftp_channels,
+            sftp_client_kwargs=sftp_client_kwargs,
         )
         return client, pool
 

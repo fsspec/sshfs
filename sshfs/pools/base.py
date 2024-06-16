@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import AsyncExitStack, suppress
+from typing import Optional
 
 from asyncssh.misc import ChannelOpenError
 
@@ -15,9 +16,10 @@ class BaseSFTPChannelPool:
         self,
         client,
         *,
-        max_channels=None,
-        timeout=MAX_TIMEOUT,
-        unsafe_terminate=True,
+        max_channels: Optional[int] = None,
+        timeout: int = MAX_TIMEOUT,
+        unsafe_terminate: bool = True,
+        sftp_client_kwargs: Optional[dict] = None,
         **kwargs,
     ):
         self.client = client
@@ -38,18 +40,7 @@ class BaseSFTPChannelPool:
         self.unsafe_terminate = unsafe_terminate
         self._stack = AsyncExitStack()
 
-        self.sftp_client_kwargs = {
-            k: v
-            for k, v in kwargs.items()
-            if k
-            in {
-                "env",
-                "send_env",
-                "path_encoding",
-                "path_errors",
-                "sftp_version",
-            }
-        }
+        self.sftp_client_kwargs = sftp_client_kwargs or {}
 
     async def _maybe_new_channel(self):
         # If there is no hard limit or the limit is not hit yet
