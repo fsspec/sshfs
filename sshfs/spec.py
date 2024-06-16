@@ -2,10 +2,10 @@ import asyncio
 import posixpath
 import shlex
 import stat
-from typing import Optional
 import weakref
 from contextlib import AsyncExitStack, suppress
 from datetime import datetime
+from typing import Optional
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
@@ -54,7 +54,7 @@ class SSHFileSystem(AsyncFileSystem):
             pool managers offer the flexibility of prioritizing channels
             and deciding which to use).
         sftp_client_kwargs: Optional[dict]
-            Parameters to pass to asyncssh.SSHClientConnection.start_sftp_client method 
+            Parameters to pass to asyncssh.SSHClientConnection.start_sftp_client method
             (e.g. env, send_env, path_encoding, path_errors, sftp_version).
         """
 
@@ -68,6 +68,7 @@ class SSHFileSystem(AsyncFileSystem):
             )
         _client_args = kwargs.copy()
         _client_args.setdefault("known_hosts", None)
+        sftp_client_kwargs = sftp_client_kwargs or {}
 
         self._stack = AsyncExitStack()
         self.active_executors = 0
@@ -77,7 +78,7 @@ class SSHFileSystem(AsyncFileSystem):
             max_sftp_channels=max_sessions - _SHELL_CHANNELS,
             timeout=_timeout,  # goes to sync_wrapper
             connect_args=_client_args,  # for asyncssh.connect
-            sftp_client_kwargs=sftp_client_kwargs or {},  # for asyncssh.SSHClientConnection.start_sftp_client
+            sftp_client_kwargs=sftp_client_kwargs,  # for asyncssh.SSHClientConnection.start_sftp_client
         )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
