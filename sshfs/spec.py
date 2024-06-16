@@ -2,6 +2,7 @@ import asyncio
 import posixpath
 import shlex
 import stat
+from typing import Optional
 import weakref
 from contextlib import AsyncExitStack, suppress
 from datetime import datetime
@@ -34,6 +35,7 @@ class SSHFileSystem(AsyncFileSystem):
         host,
         *,
         pool_type=SFTPSoftChannelPool,
+        sftp_client_args: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -46,28 +48,18 @@ class SSHFileSystem(AsyncFileSystem):
         **kwargs: Any
             Any option that will be passed to either the top level
             `AsyncFileSystem` (e.g. timeout)
-            or `asyncssh.SSHClientConnection.start_sftp_client` (e.g. env, send_env, path_encoding, path_errors, sftp_version)
             or the `asyncssh.connect`.
         pool_type: sshfs.pools.base.BaseSFTPChannelPool
             Pool manager to use (when doing concurrent operations together,
             pool managers offer the flexibility of prioritizing channels
             and deciding which to use).
+        sftp_client_args: Optional[dict]
+            Parameters to pass to asyncssh.SSHClientConnection.start_sftp_client method 
+            (e.g. env, send_env, path_encoding, path_errors, sftp_version).
         """
 
         super().__init__(self, **kwargs)
 
-        _sftp_client_args = {
-            k: kwargs.pop(k)
-            for k in kwargs.copy().keys()
-            if k
-            in {
-                "env",
-                "send_env",
-                "path_encoding",
-                "path_errors",
-                "sftp_version",
-            }
-        }
         _timeout = kwargs.pop("timeout", None)
         max_sessions = kwargs.pop("max_sessions", _DEFAULT_MAX_SESSIONS)
         if max_sessions <= _SHELL_CHANNELS:
@@ -85,7 +77,7 @@ class SSHFileSystem(AsyncFileSystem):
             max_sftp_channels=max_sessions - _SHELL_CHANNELS,
             timeout=_timeout,  # goes to sync_wrapper
             connect_args=_client_args,  # for asyncssh.connect
-            sftp_client_args=_sftp_client_args,  # for asyncssh.SSHClientConnection.start_sftp_client
+            sftp_client_args=sftp_client_args or {},  # for asyncssh.SSHClientConnection.start_sftp_client
         )
         weakref.finalize(
             self, sync, self.loop, self._finalize, self._pool, self._stack
