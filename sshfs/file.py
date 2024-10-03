@@ -81,6 +81,9 @@ class SSHFile(io.IOBase):
     def readable(self):
         return "r" in self.mode
 
+    def seekable(self):
+        return True
+
     def writable(self):
         return not self.readable()
 
