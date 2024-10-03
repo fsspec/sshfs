@@ -18,8 +18,7 @@ class SSHFile(io.IOBase):
         self.fs = fs
         self.loop = fs.loop
 
-        # TODO: support r+ / w+ / a+
-        if mode not in {"rb", "wb", "ab"}:
+        if "t" in mode or "b" not in mode:
             raise ValueError(f"Unsupported file mode: {mode}")
 
         self.path = path
@@ -79,13 +78,16 @@ class SSHFile(io.IOBase):
     _close = _mirror_method("close")
 
     def readable(self):
-        return "r" in self.mode
+        return "r" in self.mode or "+" in self.mode
+
+    def seekable(self):
+        return "r" in self.mode or "w" in self.mode
 
     def seekable(self):
         return True
 
     def writable(self):
-        return not self.readable()
+        return any(x in self.mode for x in ["a", "w", "+"])
 
     def close(self):
         if self._closed:
