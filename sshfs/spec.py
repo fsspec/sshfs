@@ -105,7 +105,7 @@ class SSHFileSystem(AsyncFileSystem):
 
         # If an error occurs while the SSHFile is trying to
         # open the native file, then the client might get broken
-        # due to partial initalization. We are just going to ignore
+        # due to partial initialization. We are just going to ignore
         # the errors that arises on the finalization layer
         with suppress(BrokenPipeError):
             await stack.aclose()
