@@ -18,7 +18,6 @@ repos:
         - mdformat-black
         - mdformat_tables
 - repo: https://github.com/codespell-project/codespell
-  # Configuration for codespell is in pyproject.toml
   rev: v2.3.0
   hooks:
   - id: codespell
