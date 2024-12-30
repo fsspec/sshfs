@@ -75,7 +75,7 @@ You can also create new files through either putting a local file with `put_file
 
 ```py
 >>> with fs.open('/tmp/message.dat', 'wb') as stream:
-...     stream.write(b'super secret messsage!')
+...     stream.write(b'super secret message!')
 ...
 ```
 
@@ -85,7 +85,7 @@ And either download it through `get_file` or simply read it on the fly with open
 >>> with fs.open('/tmp/message.dat') as stream:
 ...     print(stream.read())
 ...
-b'super secret messsage!'
+b'super secret message!'
 ```
 
 There are also a lot of other basic filesystem operations, such as `mkdir`, `touch` and `find`;
