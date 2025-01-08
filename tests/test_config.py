@@ -45,7 +45,4 @@ def test_config_expansions(tmpdir):
         ProxyCommand ssh proxy nc %h %p
     """,
     )
-
-    assert (
-        config.get("ProxyCommand") == "ssh proxy nc base.dvc.org 222".split()
-    )
+    assert config.get("ProxyCommand") == "ssh proxy nc base.dvc.org 222"
