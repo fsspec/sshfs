@@ -45,5 +45,6 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
             host,
             port,
         )
-        config._options["ProxyCommand"] = config._options["ProxyCommand"].split()
+        if config._options.get("ProxyCommand", None):
+            config._options["ProxyCommand"] = config["ProxyCommand"].split()
         return config
