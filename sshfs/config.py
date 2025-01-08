@@ -34,7 +34,7 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
     else:
         canonical = False  # Fixed typo
         final = False  # Fixed typo
-        return  SSHClientConfig.load(
+        config =  SSHClientConfig.load(
             last_config,
             config_files,
             reload,
@@ -45,3 +45,5 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
             host,
             port,
         )
+        config._options["ProxyCommand"] = config._options["ProxyCommand"].split()
+        return config
