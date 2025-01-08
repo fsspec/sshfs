@@ -49,5 +49,5 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
         # test compares as list
         #this is done just to compatible with prev test case
         if config.get("ProxyCommand", None):
-            config["ProxyCommand"] = config.get("ProxyCommand").split()
+            config._set_string_list("ProxyCommand", config.get("ProxyCommand").split())
         return config
