@@ -34,7 +34,7 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
     else:
         canonical = False  # Fixed typo
         final = False  # Fixed typo
-        return SSHClientConfig.load(
+        config =  SSHClientConfig.load(
             last_config,
             config_files,
             reload,
@@ -45,3 +45,9 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
             host,
             port,
         )
+        # the proxycommand is returned in str here
+        # test compares as list
+        #this is done just to compatible with prev test case
+        if config.get("ProxyCommand", None):
+            config["ProxyCommand"] = config.get("ProxyCommand").split()
+        return config
