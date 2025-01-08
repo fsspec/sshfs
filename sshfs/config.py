@@ -31,20 +31,16 @@ def parse_config(*, host, user=(), port=(), local_user=None, config_files=None):
             host,
             port,
         )
-    else:
-        canonical = False  # Fixed typo
-        final = False  # Fixed typo
-        config =  SSHClientConfig.load(
-            last_config,
-            config_files,
-            reload,
-            canonical,  # Use correct parameter
-            final,  # Use correct parameter
-            local_user,
-            user,
-            host,
-            port,
-        )
-        if config._options.get("ProxyCommand", None):
-            config._options["ProxyCommand"] = config["ProxyCommand"].split()
-        return config
+    canonical = False  # Fixed typo
+    final = False  # Fixed typo
+    return  SSHClientConfig.load(
+        last_config,
+        config_files,
+        reload,
+        canonical,  # Use correct parameter
+        final,  # Use correct parameter
+        local_user,
+        user,
+        host,
+        port,
+    )
