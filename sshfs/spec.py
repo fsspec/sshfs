@@ -63,6 +63,7 @@ class SSHFileSystem(AsyncFileSystem):
         _client_args.setdefault("known_hosts", None)
 
         self._stack = AsyncExitStack()
+        self.cachable = False
         self.active_executors = 0
         self._client, self._pool = self.connect(
             host,
