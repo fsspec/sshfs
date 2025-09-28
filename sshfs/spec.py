@@ -203,6 +203,12 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
+        # some SFTP servers support the copy-data extension
+        with suppress(SFTPOpUnsupported):
+            async with self._pool.get() as channel:
+                await channel.copy(lpath, rpath)
+                return
+
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
