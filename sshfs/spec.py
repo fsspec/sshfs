@@ -100,7 +100,8 @@ class SSHFileSystem(AsyncFileSystem):
 
     connect = sync_wrapper(_connect)
 
-    async def _finalize(self, pool, stack):
+    @staticmethod
+    async def _finalize(pool, stack):
         await pool.close()
 
         # If an error occurs while the SSHFile is trying to
