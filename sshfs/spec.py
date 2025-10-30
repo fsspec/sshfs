@@ -8,7 +8,13 @@ from datetime import datetime
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
-from fsspec.asyn import AsyncFileSystem, async_methods, sync, sync_wrapper
+from fsspec.asyn import (
+    AsyncFileSystem,
+    FSTimeoutError,
+    async_methods,
+    sync,
+    sync_wrapper,
+)
 from fsspec.utils import infer_storage_options
 
 from sshfs.file import SSHFile
@@ -71,7 +77,7 @@ class SSHFileSystem(AsyncFileSystem):
             **_client_args,
         )
         weakref.finalize(
-            self, sync, self.loop, self._finalize, self._pool, self._stack
+            self, self._finalize, self.loop, self._pool, self._stack
         )
 
     @classmethod
@@ -101,15 +107,29 @@ class SSHFileSystem(AsyncFileSystem):
     connect = sync_wrapper(_connect)
 
     @staticmethod
-    async def _finalize(pool, stack):
-        await pool.close()
+    def _finalize(loop, pool, stack):
+        async def close():
+            await pool.close()
+            # If an error occurs while the SSHFile is trying to
+            # open the native file, then the client might get broken
+            # due to partial initialization. We are just going to ignore
+            # the errors that arises on the finalization layer
+            with suppress(BrokenPipeError):
+                await stack.aclose()
 
-        # If an error occurs while the SSHFile is trying to
-        # open the native file, then the client might get broken
-        # due to partial initialization. We are just going to ignore
-        # the errors that arises on the finalization layer
-        with suppress(BrokenPipeError):
-            await stack.aclose()
+        if loop is not None and loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(close())
+                return
+            except RuntimeError:
+                pass
+
+            try:
+                sync(loop, close, timeout=0.1)
+                return
+            except FSTimeoutError:
+                pass
 
     @property
     def client(self):
