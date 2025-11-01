@@ -4,11 +4,12 @@ import secrets
 import tempfile
 import warnings
 from concurrent import futures
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import fsspec
 import pytest
+from _pytest.python_api import ApproxBase
 from asyncssh.sftp import SFTPFailure
 from importlib_metadata import entry_points
 
@@ -17,7 +18,16 @@ from sshfs import SSHFileSystem
 _STATIC = (Path(__file__).parent / "static").resolve()
 USERS = {"user": _STATIC / "user.key"}
 
-DEVIATION = 5
+
+class approx_datetime(ApproxBase):
+    def __init__(self, expected, abs=1):
+        super().__init__(expected, abs=timedelta(seconds=abs))
+
+    def __repr__(self):
+        return f"approx_datetime({self.expected!r} ± {self.abs!r})"
+
+    def __eq__(self, actual):
+        return abs(self.expected - actual) <= self.abs
 
 
 @pytest.fixture(scope="session")
@@ -128,6 +138,12 @@ def test_move(fs, remote_dir):
 
     initial_info.pop("name")
     secondary_info.pop("name")
+    assert initial_info.pop("time") == approx_datetime(
+        secondary_info.pop("time")
+    )
+    assert initial_info.pop("mtime") == approx_datetime(
+        secondary_info.pop("mtime")
+    )
     assert initial_info == secondary_info
 
 
