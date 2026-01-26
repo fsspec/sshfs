@@ -1,16 +1,61 @@
 [build-system]
-requires = ["setuptools>=48", "setuptools_scm[toml]>=6.3.1"]
+requires = ["setuptools>=77", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "sshfs"
+description = "SSH Filesystem -- Async SSH/SFTP backend for fsspec"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dynamic = ["version"]
+
+dependencies = [
+    "fsspec>=2021.8.1",
+    "asyncssh>=2.11.0,<3",
+]
+
+[project.optional-dependencies]
+bcrypt = ["asyncssh[bcrypt]"]
+fido2 = ["asyncssh[fido2]"]
+gssapi = ["asyncssh[gssapi]"]
+libnacl = ["asyncssh[libnacl]"]
+pkcs11 = ["asyncssh[python-pkcs11]"]
+pyopenssl = ["asyncssh[pyOpenSSL]"]
+pywin32 = ["asyncssh[pywin32]"]
+
+[project.urls]
+Issues = "https://github.com/fsspec/sshfs/issues"
+Source = "https://github.com/fsspec/sshfs"
+
+[project.entry-points."fsspec.specs"]
+ssh = "sshfs.spec:SSHFileSystem"
+sftp = "sshfs.spec:SSHFileSystem"
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "tests.*"]
+namespaces = false
 
 [tool.setuptools_scm]
 
 [tool.black]
 line-length = 79
-target-version = ['py38']
+target-version = ['py39']
 
 [tool.isort]
-atomic=true
-force_grid_wrap=0
-include_trailing_comma=true
-multi_line_output=3
-use_parentheses=true
+atomic = true
+force_grid_wrap = 0
+include_trailing_comma = true
+multi_line_output = 3
+use_parentheses = true

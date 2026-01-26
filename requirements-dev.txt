@@ -1,5 +1,5 @@
 pytest
 pytest-asyncio
 pytest-cov
-mock-ssh-server @ git+https://github.com/skshetry/mock-ssh-server.git@command-queue-race
+mock-ssh-server
 importlib-metadata >= 6.0.0
