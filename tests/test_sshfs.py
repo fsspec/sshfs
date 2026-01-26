@@ -18,7 +18,6 @@ _STATIC = (Path(__file__).parent / "static").resolve()
 USERS = {"user": _STATIC / "user.key"}
 
 
-
 @pytest.fixture(scope="session")
 def ssh_server():
     with warnings.catch_warnings():
