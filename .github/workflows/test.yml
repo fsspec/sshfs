@@ -34,7 +34,7 @@ jobs:
         python -m pip install -e .
 
     - name: Test
-      timeout-minutes: 2
+      timeout-minutes: 1
       run: python -m pytest --cov-report=xml --cov=.
 
     - name: Upload coverage to Codecov
