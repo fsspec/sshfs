@@ -138,12 +138,17 @@ def test_move(fs, remote_dir):
 
     initial_info.pop("name")
     secondary_info.pop("name")
-    assert initial_info.pop("time") == approx_datetime(
-        secondary_info.pop("time")
-    )
-    assert initial_info.pop("mtime") == approx_datetime(
-        secondary_info.pop("mtime")
-    )
+
+    initial_mtime = initial_info.pop("mtime")
+    initial_atime = initial_info.pop("time")
+    secondary_mtime = secondary_info.pop("mtime")
+    secondary_atime = secondary_info.pop("time")
+    assert abs(secondary_mtime - initial_mtime) <= timedelta(
+        seconds=1
+    ), "mtime differs more than expected"
+    assert abs(secondary_atime - initial_atime) <= timedelta(
+        seconds=1
+    ), "atime differs more than expected"
     assert initial_info == secondary_info
 
 
