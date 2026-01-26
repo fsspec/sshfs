@@ -58,8 +58,7 @@ class BaseSFTPChannelPool:
     async def get(self):
         raise NotImplementedError
 
-    async def _cleanup(self):
-        ...
+    async def _cleanup(self): ...
 
     async def close(self):
         if self.active_channels and not self.unsafe_terminate:
