@@ -18,16 +18,6 @@ _STATIC = (Path(__file__).parent / "static").resolve()
 USERS = {"user": _STATIC / "user.key"}
 
 
-class approx_datetime(ApproxBase):
-    def __init__(self, expected, abs=1):
-        super().__init__(expected, abs=timedelta(seconds=abs))
-
-    def __repr__(self):
-        return f"approx_datetime({self.expected!r} ± {self.abs!r})"
-
-    def __eq__(self, actual):
-        return abs(self.expected - actual) <= self.abs
-
 
 @pytest.fixture(scope="session")
 def ssh_server():
