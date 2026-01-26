@@ -9,7 +9,6 @@ from pathlib import Path
 
 import fsspec
 import pytest
-from _pytest.python_api import ApproxBase
 from asyncssh.sftp import SFTPFailure
 from importlib_metadata import entry_points
 
