@@ -203,6 +203,33 @@ def test_ls(fs, remote_dir):
     assert dirs == expected
 
 
+def test_walk(fs, remote_dir):
+    fs.mkdir(remote_dir + "/a")
+    fs.mkdir(remote_dir + "/a/b")
+    fs.touch(remote_dir + "/a/f1")
+    fs.touch(remote_dir + "/a/b/f2")
+
+    result = {
+        root: (sorted(dirs), sorted(files))
+        for root, dirs, files in fs.walk(remote_dir + "/a")
+    }
+    assert result == {
+        remote_dir + "/a": (["b"], ["f1"]),
+        remote_dir + "/a/b": ([], ["f2"]),
+    }
+
+
+def test_walk_root(fs):
+    # Regression: SSHFileSystem._strip_protocol("/") used to collapse the
+    # root to "", so walk("/") listed the home directory and yielded
+    # relative paths that were not considered to exist.
+    root, dirs, files = next(iter(fs.walk("/", maxdepth=1, detail=True)))
+    assert root == "/"
+    for info in dirs.values():
+        assert info["name"].startswith("/")
+        assert fs.exists(info["name"])
+
+
 def test_mkdir(fs, remote_dir):
     fs.mkdir(remote_dir + "dir/")
     assert fs.isdir(remote_dir + "dir/")

@@ -35,6 +35,8 @@ _DEFAULT_MAX_SESSIONS = 10
 
 
 class SSHFileSystem(AsyncFileSystem):
+    root_marker = "/"
+
     def __init__(
         self,
         host,
