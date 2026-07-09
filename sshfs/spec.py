@@ -4,7 +4,7 @@ import shlex
 import stat
 import weakref
 from contextlib import AsyncExitStack, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
@@ -32,6 +32,11 @@ async_methods.append("_mv")
 # and the rest (generally 8) for SFTP.
 _SHELL_CHANNELS = 2
 _DEFAULT_MAX_SESSIONS = 10
+
+
+def _naive_utc(timestamp):
+    # Naive UTC datetime, matching the historical utcfromtimestamp() output.
+    return datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
 
 
 class SSHFileSystem(AsyncFileSystem):
@@ -151,8 +156,8 @@ class SSHFileSystem(AsyncFileSystem):
             "type": kind,
             "gid": attributes.gid,
             "uid": attributes.uid,
-            "time": datetime.utcfromtimestamp(attributes.atime),
-            "mtime": datetime.utcfromtimestamp(attributes.mtime),
+            "time": _naive_utc(attributes.atime),
+            "mtime": _naive_utc(attributes.mtime),
             "permissions": attributes.permissions,
         }
 
