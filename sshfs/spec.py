@@ -35,8 +35,6 @@ _DEFAULT_MAX_SESSIONS = 10
 
 
 class SSHFileSystem(AsyncFileSystem):
-    root_marker = "/"
-
     def __init__(
         self,
         host,
@@ -86,7 +84,14 @@ class SSHFileSystem(AsyncFileSystem):
     def _strip_protocol(cls, path):
         # Remove components such as host and username from path.
         inferred_path = infer_storage_options(path)["path"]
-        return super()._strip_protocol(inferred_path)
+        stripped = super()._strip_protocol(inferred_path)
+        # super() collapses a bare "/" to the (empty) root_marker. Restore it
+        # only when the caller explicitly supplied the absolute root, so that
+        # walk("/") lists from the root while relative paths (and "") still
+        # resolve against the home directory.
+        if not stripped and inferred_path.startswith("/"):
+            return "/"
+        return stripped
 
     @staticmethod
     def _get_kwargs_from_urls(urlpath):

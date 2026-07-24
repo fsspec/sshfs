@@ -230,6 +230,21 @@ def test_walk_root(fs):
         assert fs.exists(info["name"])
 
 
+def test_strip_protocol():
+    strip = SSHFileSystem._strip_protocol
+    # An explicit absolute root is preserved so walk("/") lists from the root.
+    assert strip("/") == "/"
+    assert strip("ssh://host/") == "/"
+    # Empty and relative paths still resolve against the home directory
+    # instead of being redirected to the root.
+    assert strip("") == ""
+    assert strip("ssh://host") == ""
+    assert strip("foo/bar") == "foo/bar"
+    # Regular absolute paths are unaffected.
+    assert strip("/foo/bar") == "/foo/bar"
+    assert strip("ssh://host/foo/bar") == "/foo/bar"
+
+
 def test_mkdir(fs, remote_dir):
     fs.mkdir(remote_dir + "dir/")
     assert fs.isdir(remote_dir + "dir/")
