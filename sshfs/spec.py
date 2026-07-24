@@ -34,11 +34,6 @@ _SHELL_CHANNELS = 2
 _DEFAULT_MAX_SESSIONS = 10
 
 
-def _naive_utc(timestamp):
-    # Naive UTC datetime, matching the historical utcfromtimestamp() output.
-    return datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
-
-
 class SSHFileSystem(AsyncFileSystem):
     def __init__(
         self,
@@ -156,8 +151,16 @@ class SSHFileSystem(AsyncFileSystem):
             "type": kind,
             "gid": attributes.gid,
             "uid": attributes.uid,
-            "time": _naive_utc(attributes.atime),
-            "mtime": _naive_utc(attributes.mtime),
+            "time": (
+                datetime.fromtimestamp(attributes.atime, tz=timezone.utc)
+                if attributes.atime is not None
+                else None
+            ),
+            "mtime": (
+                datetime.fromtimestamp(attributes.mtime, tz=timezone.utc)
+                if attributes.mtime is not None
+                else None
+            ),
             "permissions": attributes.permissions,
         }
 
