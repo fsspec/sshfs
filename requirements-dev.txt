@@ -1,5 +1,6 @@
 pytest
 pytest-asyncio
 pytest-cov
+pytest-rerunfailures
 mock-ssh-server
 importlib-metadata >= 6.0.0
