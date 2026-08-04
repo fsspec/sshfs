@@ -49,6 +49,13 @@ namespaces = false
 
 [tool.setuptools_scm]
 
+[tool.pytest.ini_options]
+# The suite intermittently hangs on the first SSH connection against
+# mock-ssh-server (Linux only). Dump all thread stacks when a test
+# exceeds this, so a hang in CI is diagnosable instead of a mute
+# step-timeout kill.
+faulthandler_timeout = 60
+
 [tool.black]
 line-length = 79
 target-version = ['py39']
