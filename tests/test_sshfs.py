@@ -115,6 +115,28 @@ def test_sftp_client_kwargs(ssh_server, base_remote_dir, user="user"):
     assert fs.exists(file)
 
 
+def test_sftp_client_kwargs_path_encoding(
+    ssh_server, base_remote_dir, user="user"
+):
+    # path_encoding=None makes asyncssh deliver remote paths as raw
+    # bytes instead of str, for servers with non-UTF-8 file names (#39).
+    fs = SSHFileSystem(
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username=user,
+        client_keys=[USERS[user]],
+        sftp_client_kwargs={"path_encoding": None},
+    )
+
+    directory = Path(base_remote_dir) / "path_encoding_probe"
+    directory.mkdir()
+    (directory / "data.txt").write_bytes(b"data")
+
+    encoded = str(directory).encode()
+    assert fs.ls(encoded) == [encoded + b"/data.txt"]
+    assert fs.cat_file(encoded + b"/data.txt") == b"data"
+
+
 def test_info(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
