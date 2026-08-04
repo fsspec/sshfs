@@ -17,7 +17,7 @@ class BaseSFTPChannelPool:
         client,
         *,
         max_channels: Optional[int] = None,
-        timeout: int = MAX_TIMEOUT,
+        timeout: Optional[float] = MAX_TIMEOUT,
         unsafe_terminate: bool = True,
         sftp_client_kwargs: Optional[dict] = None,
         **kwargs,
