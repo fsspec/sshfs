@@ -219,12 +219,12 @@ def test_walk(fs, remote_dir):
     }
 
 
-def test_walk_root(fs):
-    # walk("/") must anchor at the root, not the user's home directory.
-    # Only the yielded root is asserted: the mock server exposes the
-    # host's real filesystem, so the contents of "/" are unpredictable.
-    root, _dirs, _files = next(fs.walk("/", maxdepth=1))
-    assert root == "/"
+def test_root(fs):
+    # An explicit "/" must resolve to the filesystem root, not the
+    # user's home directory.
+    assert fs.exists("/")
+    assert fs.isdir("/")
+    assert fs.info("/")["name"] == "/"
 
 
 def test_strip_protocol():
