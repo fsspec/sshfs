@@ -4,12 +4,12 @@ import secrets
 import tempfile
 import warnings
 from concurrent import futures
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPFailure
+from asyncssh.sftp import SFTPAttrs, SFTPFailure
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
@@ -114,6 +114,22 @@ def test_info(fs, remote_dir):
 
     details = fs.info(remote_dir + "/dir/")
     assert details["name"] == remote_dir + "/dir/"
+
+
+def test_info_timestamps_are_tz_aware_utc(fs, remote_dir):
+    fs.touch(remote_dir + "/a.txt")
+    details = fs.info(remote_dir + "/a.txt")
+    for key in ["time", "mtime"]:
+        assert details[key].tzinfo == timezone.utc
+
+
+def test_decode_attributes_missing_timestamps(fs):
+    attrs = SFTPAttrs(
+        permissions=0o100644, size=0, uid=0, gid=0, atime=None, mtime=None
+    )
+    details = fs._decode_attributes(attrs)
+    assert details["time"] is None
+    assert details["mtime"] is None
 
 
 def test_move(fs, remote_dir):

@@ -4,7 +4,7 @@ import shlex
 import stat
 import weakref
 from contextlib import AsyncExitStack, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
@@ -158,8 +158,16 @@ class SSHFileSystem(AsyncFileSystem):
             "type": kind,
             "gid": attributes.gid,
             "uid": attributes.uid,
-            "time": datetime.utcfromtimestamp(attributes.atime),
-            "mtime": datetime.utcfromtimestamp(attributes.mtime),
+            "time": (
+                datetime.fromtimestamp(attributes.atime, tz=timezone.utc)
+                if attributes.atime is not None
+                else None
+            ),
+            "mtime": (
+                datetime.fromtimestamp(attributes.mtime, tz=timezone.utc)
+                if attributes.mtime is not None
+                else None
+            ),
             "permissions": attributes.permissions,
         }
 
