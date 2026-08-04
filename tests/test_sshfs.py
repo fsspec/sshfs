@@ -100,6 +100,21 @@ def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
             }
 
 
+def test_sftp_client_kwargs(ssh_server, base_remote_dir, user="user"):
+    fs = SSHFileSystem(
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username=user,
+        client_keys=[USERS[user]],
+        sftp_client_kwargs={"sftp_version": 3},
+    )
+    assert fs._pool.sftp_client_kwargs == {"sftp_version": 3}
+
+    file = posixpath.join(base_remote_dir, "sftp_client_kwargs_probe")
+    fs.touch(file)
+    assert fs.exists(file)
+
+
 def test_info(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")

@@ -53,15 +53,16 @@ class SSHFileSystem(AsyncFileSystem):
             SSH host to connect.
         **kwargs: Any
             Any option that will be passed to either the top level
-            `AsyncFileSystem` (e.g. timeout)
-            or the `asyncssh.connect`.
+            `AsyncFileSystem` or the `asyncssh.connect`. `timeout`
+            limits the initial connection setup.
         pool_type: sshfs.pools.base.BaseSFTPChannelPool
             Pool manager to use (when doing concurrent operations together,
             pool managers offer the flexibility of prioritizing channels
             and deciding which to use).
         sftp_client_kwargs: Optional[dict]
-            Parameters to pass to asyncssh.SSHClientConnection.start_sftp_client method
-            (e.g. env, send_env, path_encoding, path_errors, sftp_version).
+            Options passed to `SSHClientConnection.start_sftp_client`
+            (e.g. env, send_env, path_encoding, path_errors,
+            sftp_version).
         """
 
         super().__init__(self, **kwargs)
@@ -82,9 +83,11 @@ class SSHFileSystem(AsyncFileSystem):
             host,
             pool_type,
             max_sftp_channels=max_sessions - _SHELL_CHANNELS,
-            timeout=_timeout,  # goes to sync_wrapper
-            connect_args=_client_args,  # for asyncssh.connect
-            sftp_client_kwargs=sftp_client_kwargs,  # for asyncssh.SSHClientConnection.start_sftp_client
+            # timeout is consumed by the sync() machinery underneath
+            # sync_wrapper, it never reaches _connect
+            timeout=_timeout,
+            connect_args=_client_args,
+            sftp_client_kwargs=sftp_client_kwargs,
         )
         weakref.finalize(
             self, self._finalize, self.loop, self._pool, self._stack
