@@ -256,6 +256,45 @@ def test_ls(fs, remote_dir):
     assert dirs == expected
 
 
+def test_walk(fs, remote_dir):
+    fs.mkdir(remote_dir + "/a")
+    fs.mkdir(remote_dir + "/a/b")
+    fs.touch(remote_dir + "/a/f1")
+    fs.touch(remote_dir + "/a/b/f2")
+
+    result = {
+        root: (sorted(dirs), sorted(files))
+        for root, dirs, files in fs.walk(remote_dir + "/a")
+    }
+    assert result == {
+        remote_dir + "/a": (["b"], ["f1"]),
+        remote_dir + "/a/b": ([], ["f2"]),
+    }
+
+
+def test_root(fs):
+    # An explicit "/" must resolve to the filesystem root, not the
+    # user's home directory.
+    assert fs.exists("/")
+    assert fs.isdir("/")
+    assert fs.info("/")["name"] == "/"
+
+
+def test_strip_protocol():
+    strip = SSHFileSystem._strip_protocol
+    # An explicit absolute root is preserved so walk("/") lists from the root.
+    assert strip("/") == "/"
+    assert strip("ssh://host/") == "/"
+    # Empty and relative paths still resolve against the home directory
+    # instead of being redirected to the root.
+    assert strip("") == ""
+    assert strip("ssh://host") == ""
+    assert strip("foo/bar") == "foo/bar"
+    # Regular absolute paths are unaffected.
+    assert strip("/foo/bar") == "/foo/bar"
+    assert strip("ssh://host/foo/bar") == "/foo/bar"
+
+
 def test_mkdir(fs, remote_dir):
     fs.mkdir(remote_dir + "dir/")
     assert fs.isdir(remote_dir + "dir/")
