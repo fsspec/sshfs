@@ -6,6 +6,7 @@ import warnings
 from concurrent import futures
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import fsspec
 import pytest
@@ -13,6 +14,8 @@ from asyncssh.sftp import SFTPAttrs, SFTPFailure
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
+from sshfs.file import SSHFile
+from sshfs.utils import READ_BLOCK_SIZE, WRITE_BLOCK_SIZE
 
 _STATIC = (Path(__file__).parent / "static").resolve()
 USERS = {"user": _STATIC / "user.key"}
@@ -334,6 +337,50 @@ def test_exceptions(fs, remote_dir):
     fs.makedirs(remote_dir + "/dir/a/b/c")
     with pytest.raises(FileExistsError):
         fs.makedirs(remote_dir + "/dir/a/b/c")
+
+
+def test_open_block_size(fs, remote_dir):
+    # mockssh (paramiko) does not implement limits@openssh.com, so the
+    # tuned defaults must survive asyncssh's synthesized 16 KiB floors.
+    fs.touch(remote_dir + "/a.txt")
+    with fs.open(remote_dir + "/a.txt", "rb") as file:
+        assert file.blocksize == READ_BLOCK_SIZE * file.max_requests
+    with fs.open(remote_dir + "/b.txt", "wb") as file:
+        assert file.blocksize == WRITE_BLOCK_SIZE * file.max_requests
+    # An explicit block_size always wins.
+    with fs.open(remote_dir + "/c.txt", "wb", block_size=4096) as file:
+        assert file.blocksize == 4096 * file.max_requests
+
+
+def test_determine_block_size():
+    reader = SimpleNamespace(readable=lambda: True)
+    writer = SimpleNamespace(readable=lambda: False)
+    determine = SSHFile._determine_block_size
+
+    # The server reported its limits: use them.
+    reported = SimpleNamespace(
+        limits=SimpleNamespace(
+            max_packet_len=262144,
+            max_read_len=261120,
+            max_write_len=131072,
+        )
+    )
+    assert determine(reader, reported) == 261120
+    assert determine(writer, reported) == 131072
+
+    # No limits@openssh.com support: asyncssh synthesizes 16 KiB
+    # read/write floors with max_packet_len == 0; keep the defaults.
+    synthesized = SimpleNamespace(
+        limits=SimpleNamespace(
+            max_packet_len=0, max_read_len=16384, max_write_len=16384
+        )
+    )
+    assert determine(reader, synthesized) == READ_BLOCK_SIZE
+    assert determine(writer, synthesized) == WRITE_BLOCK_SIZE
+
+    # asyncssh without the limits API at all.
+    assert determine(reader, SimpleNamespace()) == READ_BLOCK_SIZE
+    assert determine(writer, SimpleNamespace()) == WRITE_BLOCK_SIZE
 
 
 def test_open_rw(fs, remote_dir):
