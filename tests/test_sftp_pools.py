@@ -38,11 +38,13 @@ class FakeSSHClient:
     def __init__(self, max_channels=None):
         self.counter = 0
         self.max_channels = max_channels
+        self.received_sftp_client_kwargs = None
 
     @asynccontextmanager
-    async def start_sftp_client(self):
+    async def start_sftp_client(self, **kwargs):
         from asyncssh.misc import ChannelOpenError
 
+        self.received_sftp_client_kwargs = kwargs
         if self.max_channels is not None and self.counter >= self.max_channels:
             raise ChannelOpenError(None, None)
 
@@ -53,6 +55,19 @@ class FakeSSHClient:
 @pytest.fixture
 def fake_client():
     yield FakeSSHClient()
+
+
+@all_queues
+@pytest.mark.asyncio
+async def test_pool_forwards_sftp_client_kwargs(queue_type, fake_client):
+    pool = queue_type(
+        fake_client,
+        sftp_client_kwargs={"sftp_version": 3},
+        poll=False,
+    )
+    async with pool.get() as channel:
+        assert channel.no == 1
+    assert fake_client.received_sftp_client_kwargs == {"sftp_version": 3}
 
 
 @pytest.mark.asyncio
