@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure
+from asyncssh.sftp import SFTPAttrs, SFTPFailure, SFTPNoSuchFile
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
@@ -242,6 +242,9 @@ def test_cp_file_remote_copy(fs, monkeypatch):
     class Channel:
         supports_remote_copy = True
 
+        async def stat(self, path):
+            raise SFTPNoSuchFile("destination does not exist")
+
         async def realpath(self, path):
             return "/real" + path
 
@@ -276,6 +279,9 @@ def test_cp_file_same_file(fs, monkeypatch):
     class Channel:
         supports_remote_copy = True
 
+        async def stat(self, path):
+            return SFTPAttrs(permissions=0o100644)
+
         async def realpath(self, path):
             return "/real/same"
 
@@ -291,6 +297,36 @@ def test_cp_file_same_file(fs, monkeypatch):
 
     with pytest.raises(shutil.SameFileError):
         fs.cp_file("/a", "/link-to-a")
+
+
+def test_cp_file_directory_destination(fs, monkeypatch):
+    # A directory destination means "copy into" with cp's resolution
+    # rules (and its own same-file protections, e.g.
+    # cp_file("/dir/file", "/dir")), so it must take the shell path
+    # even when copy-data is available.
+    calls = []
+
+    class Channel:
+        supports_remote_copy = True
+
+        async def stat(self, path):
+            return SFTPAttrs(permissions=0o040755)
+
+        async def realpath(self, path):
+            raise AssertionError("realpath not needed for dir targets")
+
+        async def copy(self, *args, **kwargs):
+            raise AssertionError("copy must not run for dir targets")
+
+    async def record_shell(cmd, **kwargs):
+        calls.append(cmd)
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", None)
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", record_shell)
+
+    fs.cp_file("/dir/file", "/dir")
+    assert calls == ["cp /dir/file /dir"]
 
 
 @pytest.mark.parametrize("legacy_asyncssh", [False, True])

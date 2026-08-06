@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import asyncssh
-from asyncssh.sftp import SFTPOpUnsupported
+from asyncssh.sftp import SFTPNoSuchFile, SFTPOpUnsupported
 from fsspec.asyn import (
     AsyncFileSystem,
     FSTimeoutError,
@@ -278,28 +278,42 @@ class SSHFileSystem(AsyncFileSystem):
                         channel, "supports_remote_copy", False
                     )
                 if self._supports_remote_copy:
-                    # asyncssh opens the destination with truncation and
-                    # no same-file check, so aliased paths (same path or
-                    # a symlink to the source) would destroy the source;
-                    # shell cp refuses them instead. Hardlink aliases
-                    # cannot be detected over SFTP (no inode in attrs).
-                    src, dst = await asyncio.gather(
-                        channel.realpath(lpath), channel.realpath(rpath)
-                    )
-                    if src == dst:
-                        raise shutil.SameFileError(
-                            f"{lpath!r} and {rpath!r} are the same file"
+                    # The remote copy handles only the plain
+                    # file-to-file form. A directory destination means
+                    # "copy into" with cp's resolution rules (including
+                    # its same-file protections), so that form is
+                    # delegated to the shell fallback below.
+                    dst_attrs = None
+                    with suppress(SFTPNoSuchFile):
+                        dst_attrs = await channel.stat(rpath)
+                    if dst_attrs is None or not stat.S_ISDIR(
+                        dst_attrs.permissions
+                    ):
+                        # asyncssh opens the destination with truncation
+                        # and no same-file check, so aliased paths (same
+                        # path or a symlink to the source) would destroy
+                        # the source; shell cp refuses them instead.
+                        # Hardlink aliases cannot be detected over SFTP
+                        # (no inode in attrs).
+                        src, dst = await asyncio.gather(
+                            channel.realpath(lpath),
+                            channel.realpath(rpath),
                         )
-                    # preserve and follow_symlinks match what the shell
-                    # cp fallback does: copy the link target's content
-                    # and keep the source permissions.
-                    return await channel.copy(
-                        lpath,
-                        rpath,
-                        preserve=True,
-                        follow_symlinks=True,
-                        remote_only=True,
-                    )
+                        if src == dst:
+                            raise shutil.SameFileError(
+                                f"{lpath!r} and {rpath!r} " "are the same file"
+                            )
+                        # preserve and follow_symlinks match what the
+                        # shell cp fallback does: copy the link
+                        # target's content and keep the source
+                        # permissions.
+                        return await channel.copy(
+                            lpath,
+                            rpath,
+                            preserve=True,
+                            follow_symlinks=True,
+                            remote_only=True,
+                        )
 
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
