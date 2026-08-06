@@ -211,6 +211,66 @@ def test_copy(fs, remote_dir):
     assert strip_keys(initial_info) == strip_keys(secondary_info)
 
 
+class _FakeChannelPool:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def get(self):
+        pool = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                return pool.channel
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Ctx()
+
+
+def test_cp_file_remote_copy(fs, monkeypatch):
+    # A channel advertising copy-data must be used with remote_only=True
+    # (otherwise asyncssh silently copies through the client) and the
+    # shell fallback must not run.
+    calls = {}
+
+    class Channel:
+        supports_remote_copy = True
+
+        async def copy(self, lpath, rpath, remote_only=False):
+            calls["copy"] = (lpath, rpath, remote_only)
+
+    async def no_shell(*args, **kwargs):
+        raise AssertionError("shell fallback must not run")
+
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", no_shell)
+
+    fs.cp_file("/src", "/dst")
+    assert calls["copy"] == ("/src", "/dst", True)
+
+
+def test_cp_file_shell_fallback(fs, monkeypatch):
+    # Without copy-data support (or on asyncssh < 2.19, where the
+    # attribute does not exist), the shell cp path is used.
+    calls = {}
+
+    class Channel:
+        supports_remote_copy = False
+
+        async def copy(self, *args, **kwargs):
+            raise AssertionError("copy-data must not be attempted")
+
+    async def record_shell(cmd, **kwargs):
+        calls["cmd"] = cmd
+
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", record_shell)
+
+    fs.cp_file("/src", "/dst")
+    assert calls["cmd"] == "cp /src /dst"
+
+
 def test_rm(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     fs.rm(remote_dir + "/a.txt")
