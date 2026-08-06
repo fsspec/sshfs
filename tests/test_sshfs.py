@@ -1,6 +1,7 @@
 import hashlib
 import posixpath
 import secrets
+import shutil
 import tempfile
 import warnings
 from concurrent import futures
@@ -233,15 +234,19 @@ class _FakeChannelPool:
 
 def test_cp_file_remote_copy(fs, monkeypatch):
     # A channel advertising copy-data must be used with remote_only=True
-    # (otherwise asyncssh silently copies through the client) and the
-    # shell fallback must not run.
+    # (otherwise asyncssh silently copies through the client), matching
+    # the shell fallback's semantics (content of the link target,
+    # source permissions), and the shell fallback must not run.
     calls = []
 
     class Channel:
         supports_remote_copy = True
 
-        async def copy(self, lpath, rpath, remote_only=False):
-            calls.append((lpath, rpath, remote_only))
+        async def realpath(self, path):
+            return "/real" + path
+
+        async def copy(self, lpath, rpath, **kwargs):
+            calls.append((lpath, rpath, kwargs))
 
     async def no_shell(*args, **kwargs):
         raise AssertionError("shell fallback must not run")
@@ -250,12 +255,42 @@ def test_cp_file_remote_copy(fs, monkeypatch):
     monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
     monkeypatch.setattr(fs, "_execute", no_shell)
 
+    expected = {
+        "preserve": True,
+        "follow_symlinks": True,
+        "remote_only": True,
+    }
     fs.cp_file("/src", "/dst")
-    assert calls == [("/src", "/dst", True)]
+    assert calls == [("/src", "/dst", expected)]
 
     # The probed capability is cached and reused.
     fs.cp_file("/src2", "/dst2")
-    assert calls[-1] == ("/src2", "/dst2", True)
+    assert calls[-1] == ("/src2", "/dst2", expected)
+
+
+def test_cp_file_same_file(fs, monkeypatch):
+    # Aliased source and destination (same path or a symlink to the
+    # source) must fail before any data is touched: asyncssh's copy
+    # opens the destination with truncation and would destroy the
+    # source, while shell cp refuses the copy.
+    class Channel:
+        supports_remote_copy = True
+
+        async def realpath(self, path):
+            return "/real/same"
+
+        async def copy(self, *args, **kwargs):
+            raise AssertionError("copy must not run on aliased paths")
+
+    async def no_shell(*args, **kwargs):
+        raise AssertionError("shell fallback must not run")
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", None)
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", no_shell)
+
+    with pytest.raises(shutil.SameFileError):
+        fs.cp_file("/a", "/link-to-a")
 
 
 @pytest.mark.parametrize("legacy_asyncssh", [False, True])
