@@ -261,6 +261,15 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
+        # Server-side copy through the copy-data extension (asyncssh >=
+        # 2.19 with an OpenSSH >= 9.0 server) needs no shell access and
+        # keeps the data on the server. remote_only guards against
+        # asyncssh silently copying through the client instead. Without
+        # the extension, fall back to a shell cp.
+        async with self._pool.get() as channel:
+            if getattr(channel, "supports_remote_copy", False):
+                return await channel.copy(lpath, rpath, remote_only=True)
+
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
