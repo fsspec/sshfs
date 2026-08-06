@@ -136,7 +136,7 @@ def test_sftp_client_kwargs_path_encoding(
     (directory / "data.txt").write_bytes(b"data")
 
     encoded = str(directory).encode()
-    assert fs.ls(encoded) == [encoded + b"/data.txt"]
+    assert fs.ls(encoded, detail=False) == [encoded + b"/data.txt"]
     assert fs.cat_file(encoded + b"/data.txt") == b"data"
 
 
@@ -247,9 +247,9 @@ def test_ls(fs, remote_dir):
         fs.touch(file)
         files.add(file)
 
-    assert set(fs.ls(remote_dir + "dir/")) == files
+    assert set(fs.ls(remote_dir + "dir/", detail=False)) == files
 
-    dirs = fs.ls(remote_dir + "dir/", detail=True)
+    dirs = fs.ls(remote_dir + "dir/")
     expected = [fs.info(file) for file in files]
 
     by_name = lambda details: details["name"]

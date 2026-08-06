@@ -265,7 +265,7 @@ class SSHFileSystem(AsyncFileSystem):
         await self._execute(cmd)
 
     @wrap_exceptions
-    async def _ls(self, path, detail=False, **kwargs):
+    async def _ls(self, path, detail=True, **kwargs):
         async with self._pool.get() as channel:
             file_attrs = await channel.readdir(path)
 
