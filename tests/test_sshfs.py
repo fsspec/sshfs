@@ -199,7 +199,9 @@ def test_move(fs, remote_dir):
 
 
 def test_copy(fs, remote_dir):
-    fs.touch(remote_dir + "/a.txt")
+    data = b"data to copy"
+    with fs.open(remote_dir + "/a.txt", "wb") as stream:
+        stream.write(data)
     initial_info = fs.info(remote_dir + "/a.txt")
 
     fs.copy(remote_dir + "/a.txt", remote_dir + "/b.txt")
@@ -207,6 +209,7 @@ def test_copy(fs, remote_dir):
 
     assert fs.exists(remote_dir + "/a.txt")
     assert fs.exists(remote_dir + "/b.txt")
+    assert fs.cat_file(remote_dir + "/b.txt") == data
 
     assert strip_keys(initial_info) == strip_keys(secondary_info)
 
