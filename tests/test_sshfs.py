@@ -235,43 +235,60 @@ def test_cp_file_remote_copy(fs, monkeypatch):
     # A channel advertising copy-data must be used with remote_only=True
     # (otherwise asyncssh silently copies through the client) and the
     # shell fallback must not run.
-    calls = {}
+    calls = []
 
     class Channel:
         supports_remote_copy = True
 
         async def copy(self, lpath, rpath, remote_only=False):
-            calls["copy"] = (lpath, rpath, remote_only)
+            calls.append((lpath, rpath, remote_only))
 
     async def no_shell(*args, **kwargs):
         raise AssertionError("shell fallback must not run")
 
+    monkeypatch.setattr(fs, "_supports_remote_copy", None)
     monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
     monkeypatch.setattr(fs, "_execute", no_shell)
 
     fs.cp_file("/src", "/dst")
-    assert calls["copy"] == ("/src", "/dst", True)
+    assert calls == [("/src", "/dst", True)]
+
+    # The probed capability is cached and reused.
+    fs.cp_file("/src2", "/dst2")
+    assert calls[-1] == ("/src2", "/dst2", True)
 
 
-def test_cp_file_shell_fallback(fs, monkeypatch):
-    # Without copy-data support (or on asyncssh < 2.19, where the
-    # attribute does not exist), the shell cp path is used.
-    calls = {}
+@pytest.mark.parametrize("legacy_asyncssh", [False, True])
+def test_cp_file_shell_fallback(fs, monkeypatch, legacy_asyncssh):
+    # Channels without copy-data support -- and asyncssh < 2.19
+    # channels, which lack the supports_remote_copy attribute entirely
+    # -- must use the shell cp path, and only the first call may touch
+    # the channel pool (the probed capability is cached).
+    calls = []
+    pool_uses = []
 
     class Channel:
-        supports_remote_copy = False
-
         async def copy(self, *args, **kwargs):
             raise AssertionError("copy-data must not be attempted")
 
-    async def record_shell(cmd, **kwargs):
-        calls["cmd"] = cmd
+    if not legacy_asyncssh:
+        Channel.supports_remote_copy = False
 
-    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    async def record_shell(cmd, **kwargs):
+        calls.append(cmd)
+
+    pool = _FakeChannelPool(Channel())
+    _orig_get = pool.get
+    pool.get = lambda: pool_uses.append(1) or _orig_get()
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", None)
+    monkeypatch.setattr(fs, "_pool", pool)
     monkeypatch.setattr(fs, "_execute", record_shell)
 
     fs.cp_file("/src", "/dst")
-    assert calls["cmd"] == "cp /src /dst"
+    fs.cp_file("/src2", "/dst2")
+    assert calls == ["cp /src /dst", "cp /src2 /dst2"]
+    assert len(pool_uses) == 1
 
 
 def test_rm(fs, remote_dir):

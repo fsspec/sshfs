@@ -79,6 +79,8 @@ class SSHFileSystem(AsyncFileSystem):
 
         self._stack = AsyncExitStack()
         self.active_executors = 0
+        # None means "not probed yet"; resolved on first _cp_file call.
+        self._supports_remote_copy = None
         self._client, self._pool = self.connect(
             host,
             pool_type,
@@ -264,11 +266,18 @@ class SSHFileSystem(AsyncFileSystem):
         # Server-side copy through the copy-data extension (asyncssh >=
         # 2.19 with an OpenSSH >= 9.0 server) needs no shell access and
         # keeps the data on the server. remote_only guards against
-        # asyncssh silently copying through the client instead. Without
-        # the extension, fall back to a shell cp.
-        async with self._pool.get() as channel:
-            if getattr(channel, "supports_remote_copy", False):
-                return await channel.copy(lpath, rpath, remote_only=True)
+        # asyncssh silently copying through the client instead. The
+        # capability is per-connection, so it is cached after the first
+        # probe and the shell fallback never touches the channel pool
+        # again. Without the extension, fall back to a shell cp.
+        if self._supports_remote_copy is not False:
+            async with self._pool.get() as channel:
+                if self._supports_remote_copy is None:
+                    self._supports_remote_copy = getattr(
+                        channel, "supports_remote_copy", False
+                    )
+                if self._supports_remote_copy:
+                    return await channel.copy(lpath, rpath, remote_only=True)
 
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
