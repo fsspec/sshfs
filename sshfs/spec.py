@@ -218,15 +218,23 @@ class SSHFileSystem(AsyncFileSystem):
     @wrap_exceptions
     async def _mv(self, lpath, rpath, **kwargs):
         async with self._pool.get() as channel:
+            # posix-rename is an extension to the original SFTP
+            # protocol, but it is the only form that can replace an
+            # existing destination atomically.
             with suppress(SFTPOpUnsupported):
                 return await channel.posix_rename(lpath, rpath)
 
-        # Some systems doesn't natively support posix_rename
-        # which is an extension to the original SFTP protocol.
-        # In that case we are going to copy the file and delete
-        # it. The source must only be removed after the copy fully
-        # succeeded.
+            # The standard rename is still a rename: it keeps the
+            # object's identity (symlinks stay symlinks, hardlinks keep
+            # their inode and their special bits) and cannot lose data.
+            # It refuses an existing destination, which is the case the
+            # copy below has to handle.
+            with suppress(OSError, SFTPError):
+                return await channel.rename(lpath, rpath)
 
+        # Neither rename is available for these operands, so fall back
+        # to copying and removing. The source must only be removed
+        # after the copy fully succeeded.
         await self._cp_file(lpath, rpath)
         await self._rm_file(lpath)
 
@@ -314,17 +322,23 @@ class SSHFileSystem(AsyncFileSystem):
         # that a missing source cannot leave an empty destination.
         src_file = await channel.open(lpath, "rb", block_size=0)
         try:
-            # Like cp for new files: special bits stripped, and the
-            # server applies its umask to the requested mode. A mode of
-            # 0 is a valid mode; a missing one -- or a server that
-            # denies fstat -- falls back to the server default.
-            attrs = asyncssh.SFTPAttrs()
+            # Like cp for new files: the source's mode without the
+            # special bits, which the server then filters through its
+            # umask. A mode of 0 is a valid mode, so only a genuinely
+            # missing one is replaced -- and it is replaced with 0600,
+            # never with the server's default: servers may deny fstat
+            # (OpenSSH -P fstat) while allowing the copy, and defaulting
+            # to a world-readable mode would publish the contents of a
+            # private source. Owner-write is always requested so that
+            # the shell fallback can still write the file if the copy
+            # is denied; a source without owner-write therefore gains
+            # that single bit.
+            mode = 0o600
             with suppress(OSError, SFTPError):
                 src_attrs = await src_file.stat()
                 if src_attrs.permissions is not None:
-                    attrs = asyncssh.SFTPAttrs(
-                        permissions=src_attrs.permissions & 0o777
-                    )
+                    mode = (src_attrs.permissions & 0o777) | 0o200
+            attrs = asyncssh.SFTPAttrs(permissions=mode)
             try:
                 dst_file = await channel.open(
                     rpath,
@@ -342,12 +356,19 @@ class SSHFileSystem(AsyncFileSystem):
 
             try:
                 await channel.remote_copy(src_file, dst_file)
-            except (SFTPOpUnsupported, SFTPPermissionDenied):
-                # Advertised but denied (e.g. an OpenSSH allow/deny
-                # policy): stop trying the extension on this connection
-                # and let the shell cp overwrite the empty file just
-                # created.
+            except SFTPOpUnsupported:
+                # Advertised but not actually implemented: stop trying
+                # the extension on this connection and let the shell cp
+                # overwrite the empty file just created.
                 self._supports_remote_copy = False
+                with suppress(OSError, SFTPError):
+                    await dst_file.close()
+                return False
+            except SFTPPermissionDenied:
+                # Denied for these operands (an OpenSSH allow/deny
+                # policy can depend on the paths involved), which says
+                # nothing about the next copy: fall back for this one
+                # without disabling the extension connection-wide.
                 with suppress(OSError, SFTPError):
                     await dst_file.close()
                 return False
@@ -385,7 +406,9 @@ class SSHFileSystem(AsyncFileSystem):
                     return
 
         lpath, rpath = self._shell_paths(lpath, rpath)
-        cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
+        # `--` keeps a relative path starting with a dash from being
+        # parsed as an option.
+        cmd = f"cp -- {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
     @wrap_exceptions
