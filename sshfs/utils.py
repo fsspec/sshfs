@@ -4,7 +4,7 @@ import os
 
 from asyncssh import ProcessError
 from asyncssh.misc import PermissionDenied
-from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile
+from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile, SFTPPermissionDenied
 from fsspec.asyn import sync_wrapper
 
 _NOT_FOUND = os.strerror(errno.ENOENT)
@@ -27,6 +27,8 @@ def wrap_exceptions(func):
             return await func(*args, **kwargs)
         except PermissionDenied as exc:
             raise PermissionError(exc.reason) from exc
+        except SFTPPermissionDenied as exc:
+            raise PermissionError(errno.EACCES, exc.reason) from exc
         except SFTPNoSuchFile as exc:
             raise FileNotFoundError(errno.ENOENT, _NOT_FOUND) from exc
         except ProcessError as exc:
