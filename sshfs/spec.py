@@ -1,6 +1,5 @@
 import asyncio
 import posixpath
-import secrets
 import shlex
 import shutil
 import stat
@@ -10,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import asyncssh
-from asyncssh.sftp import SFTPNoSuchFile, SFTPOpUnsupported
+from asyncssh.sftp import SFTPOpUnsupported
 from fsspec.asyn import (
     AsyncFileSystem,
     FSTimeoutError,
@@ -263,65 +262,60 @@ class SSHFileSystem(AsyncFileSystem):
             )
 
     async def _remote_copy_file(self, channel, lpath, rpath):
-        # copy-data must never be pointed at an aliased destination:
-        # asyncssh opens it with truncation and would destroy the
-        # source, where shell cp refuses the copy. The realpath
-        # comparison (normalized to bytes: realpath preserves the
-        # str/bytes type of its argument) catches path and symlink
-        # aliases; hardlinks carry no inode over SFTP and cannot be
-        # detected, so the data is written to a temporary name and
-        # renamed over the destination, which is safe for any alias.
+        # The data is written through the destination's existing file
+        # (FXF_CREAT without FXF_TRUNC, truncated to the source length
+        # afterwards), never by replacing its directory entry. That is
+        # cp's own contract: the destination inode with its mode,
+        # owner, xattrs and hardlink peers survives, a read-only
+        # destination is refused at open, and a new file's requested
+        # mode passes through the server's umask. It also makes
+        # aliases safe by construction -- copying a file onto itself
+        # writes its bytes over themselves and the final truncation to
+        # its own length changes nothing -- which matters because
+        # hardlink aliases carry no inode over SFTP and cannot be
+        # detected. Detectable aliases (path and symlink, compared via
+        # realpath normalized to bytes: realpath preserves the
+        # str/bytes type of its argument) are refused like cp refuses
+        # them.
         src, dst = await asyncio.gather(
             channel.realpath(lpath), channel.realpath(rpath)
         )
-        src, dst = channel.encode(src), channel.encode(dst)
-
-        # A directory destination means "copy into": like cp, resolve
-        # it against the source's basename. isdir() is False for
-        # missing paths and checks the file type on every SFTP version
-        # (v4+ attributes carry no type bits in `permissions`).
-        if await channel.isdir(dst):
-            dst = channel.encode(
-                await channel.realpath(
-                    posixpath.join(
-                        dst, posixpath.basename(channel.encode(lpath))
-                    )
-                )
-            )
-
-        if src == dst:
+        if channel.encode(src) == channel.encode(dst):
             raise shutil.SameFileError(
                 f"{lpath!r} and {rpath!r} are the same file"
             )
 
-        # cp keeps an existing destination's mode and gives a new file
-        # the source's mode (the remote umask is unknowable over SFTP
-        # and cannot be applied). The mode is set on the temporary file
-        # before the rename, so a failure never leaves the destination
-        # changed. Timestamps are deliberately not preserved, like cp.
-        src_attrs = await channel.stat(lpath)
-        dst_attrs = None
-        with suppress(SFTPNoSuchFile):
-            dst_attrs = await channel.stat(dst)
-        mode = (dst_attrs or src_attrs).permissions & 0o7777
-
-        tmp = dst + f".{secrets.token_hex(8)}.part".encode()
-        try:
-            await channel.copy(
-                lpath, tmp, follow_symlinks=True, remote_only=True
+        # A directory destination means "copy into": like cp, resolve
+        # it against the source's basename. The copy itself keeps the
+        # requested path -- canonicalizing it would change meaning for
+        # trailing slashes and symlinks. isdir() checks the file type
+        # on every SFTP version (v4+ attributes carry no type bits in
+        # `permissions`) and is False for missing paths.
+        if await channel.isdir(rpath):
+            rpath = posixpath.join(
+                channel.encode(rpath),
+                posixpath.basename(channel.encode(lpath)),
             )
-            await channel.setstat(tmp, asyncssh.SFTPAttrs(permissions=mode))
-            try:
-                await channel.posix_rename(tmp, dst)
-            except SFTPOpUnsupported:
-                # SFTPv3 RENAME refuses existing destinations.
-                with suppress(SFTPNoSuchFile):
-                    await channel.remove(dst)
-                await channel.rename(tmp, dst)
-        except BaseException:
-            with suppress(Exception):
-                await channel.remove(tmp)
-            raise
+            resolved = await channel.realpath(rpath)
+            if channel.encode(src) == channel.encode(resolved):
+                raise shutil.SameFileError(
+                    f"{lpath!r} and {rpath!r} are the same file"
+                )
+
+        async with channel.open(lpath, "rb", block_size=0) as src_file:
+            src_attrs = await src_file.stat()
+            # Like cp for new files: special bits stripped, and the
+            # server applies its umask to the requested mode. Existing
+            # destinations keep their attributes untouched.
+            mode = (src_attrs.permissions or 0o666) & 0o777
+            async with channel.open(
+                rpath,
+                asyncssh.FXF_WRITE | asyncssh.FXF_CREAT,
+                asyncssh.SFTPAttrs(permissions=mode),
+                block_size=0,
+            ) as dst_file:
+                await channel.remote_copy(src_file, dst_file)
+                await dst_file.truncate(src_attrs.size)
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
