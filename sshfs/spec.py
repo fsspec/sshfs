@@ -8,7 +8,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import asyncssh
-from asyncssh.sftp import SFTPError, SFTPOpUnsupported, SFTPPermissionDenied
+from asyncssh.sftp import (
+    FILEXFER_TYPE_DIRECTORY,
+    FILEXFER_TYPE_REGULAR,
+    FILEXFER_TYPE_SYMLINK,
+    FILEXFER_TYPE_UNKNOWN,
+    SFTPError,
+    SFTPFailure,
+    SFTPFileAlreadyExists,
+    SFTPOpUnsupported,
+    SFTPPermissionDenied,
+)
 from fsspec.asyn import (
     AsyncFileSystem,
     FSTimeoutError,
@@ -28,6 +38,12 @@ from sshfs.utils import (
 )
 
 async_methods.append("_mv")
+
+_FILE_TYPES = {
+    FILEXFER_TYPE_REGULAR: "file",
+    FILEXFER_TYPE_DIRECTORY: "directory",
+    FILEXFER_TYPE_SYMLINK: "link",
+}
 
 # Always allocate 2 channels for shell operations
 # and the rest (generally 8) for SFTP.
@@ -168,7 +184,13 @@ class SSHFileSystem(AsyncFileSystem):
         return self._client
 
     def _decode_attributes(self, attributes):
-        if stat.S_ISDIR(attributes.permissions):
+        # SFTP v4 and later carry the file type in its own field and
+        # leave only the permission bits in `permissions`, so the type
+        # has to be read from there when the server reports one.
+        file_type = getattr(attributes, "type", FILEXFER_TYPE_UNKNOWN)
+        if file_type != FILEXFER_TYPE_UNKNOWN:
+            kind = _FILE_TYPES.get(file_type, "unknown")
+        elif stat.S_ISDIR(attributes.permissions):
             kind = "directory"
         elif stat.S_ISREG(attributes.permissions):
             kind = "file"
@@ -224,19 +246,29 @@ class SSHFileSystem(AsyncFileSystem):
             with suppress(SFTPOpUnsupported):
                 return await channel.posix_rename(lpath, rpath)
 
-            # The standard rename is still a rename: it keeps the
-            # object's identity (symlinks stay symlinks, hardlinks keep
-            # their inode and their special bits) and cannot lose data.
-            # It refuses an existing destination, which is the case the
-            # copy below has to handle.
-            with suppress(OSError, SFTPError):
+            # The standard rename keeps the object's identity
+            # (symlinks stay symlinks, hardlinks keep their inode and
+            # their special bits) and cannot lose data. Only the
+            # statuses that a rename returns for "cannot rename these
+            # operands" -- an existing destination, a cross-device
+            # move, an unimplemented request -- fall through to the
+            # shell below; permission, missing-file and transport
+            # errors are the caller's answer.
+            with suppress(
+                SFTPFailure, SFTPFileAlreadyExists, SFTPOpUnsupported
+            ):
                 return await channel.rename(lpath, rpath)
 
-        # Neither rename is available for these operands, so fall back
-        # to copying and removing. The source must only be removed
-        # after the copy fully succeeded.
-        await self._cp_file(lpath, rpath)
-        await self._rm_file(lpath)
+        # Neither rename applies, so let the remote mv do it. Copying
+        # and deleting the source here would be unsafe: a successful
+        # copy only proves that the bytes reached an open handle, not
+        # that the destination path still names it, so the source could
+        # be removed after its data ended up somewhere unreachable. On
+        # a server without shell access this raises instead, leaving
+        # the source untouched.
+        lpath, rpath = self._shell_paths(lpath, rpath)
+        cmd = f"mv -- {shlex.quote(lpath)} {shlex.quote(rpath)}"
+        await self._execute(cmd)
 
     @wrap_exceptions
     async def _put_file(
@@ -329,15 +361,12 @@ class SSHFileSystem(AsyncFileSystem):
             # never with the server's default: servers may deny fstat
             # (OpenSSH -P fstat) while allowing the copy, and defaulting
             # to a world-readable mode would publish the contents of a
-            # private source. Owner-write is always requested so that
-            # the shell fallback can still write the file if the copy
-            # is denied; a source without owner-write therefore gains
-            # that single bit.
+            # private source.
             mode = 0o600
             with suppress(OSError, SFTPError):
                 src_attrs = await src_file.stat()
                 if src_attrs.permissions is not None:
-                    mode = (src_attrs.permissions & 0o777) | 0o200
+                    mode = src_attrs.permissions & 0o777
             attrs = asyncssh.SFTPAttrs(permissions=mode)
             try:
                 dst_file = await channel.open(
