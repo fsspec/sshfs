@@ -23,13 +23,28 @@ class _TestSSHServer(asyncssh.SSHServer):
         return key == _USER_KEY.convert_to_public()
 
 
-@pytest.fixture(scope="session")
-def asyncssh_server(tmp_path_factory):
-    """SFTP server that, unlike the paramiko-based mockssh fixture,
-    implements the copy-data and limits extensions. Authenticated with
-    the test user key and chrooted to a fresh directory; yields
-    (host, port, root) where the remote "/" maps to root."""
-    root = tmp_path_factory.mktemp("asyncssh-root")
+class _ZeroSizeSFTPServer(asyncssh.SFTPServer):
+    """Reports every file as empty, like procfs and sysfs do, while
+    still serving the real content."""
+
+    def _zero(self, result):
+        attrs = asyncssh.SFTPAttrs.from_local(result)
+        attrs.size = 0
+        return attrs
+
+    def stat(self, path):
+        return self._zero(super().stat(path))
+
+    def lstat(self, path):
+        return self._zero(super().lstat(path))
+
+    def fstat(self, file_obj):
+        return self._zero(super().fstat(file_obj))
+
+
+def _serve(root, sftp_server=asyncssh.SFTPServer):
+    """Start an authenticated SFTP server chrooted to `root` on its own
+    event loop thread. Yields (host, port, root)."""
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
@@ -40,9 +55,7 @@ def asyncssh_server(tmp_path_factory):
             0,
             server_host_keys=[_USER_KEY],
             server_factory=_TestSSHServer,
-            sftp_factory=lambda chan: asyncssh.SFTPServer(
-                chan, chroot=str(root)
-            ),
+            sftp_factory=lambda chan: sftp_server(chan, chroot=str(root)),
         )
 
     server = asyncio.run_coroutine_threadsafe(_listen(), loop).result(30)
@@ -68,6 +81,23 @@ def asyncssh_server(tmp_path_factory):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=5)
         loop.close()
+
+
+@pytest.fixture(scope="session")
+def asyncssh_server(tmp_path_factory):
+    """SFTP server that, unlike the paramiko-based mockssh fixture,
+    implements the copy-data and limits extensions. Authenticated with
+    the test user key and chrooted to a fresh directory; yields
+    (host, port, root) where the remote "/" maps to root."""
+    yield from _serve(tmp_path_factory.mktemp("asyncssh-root"))
+
+
+@pytest.fixture(scope="session")
+def zero_size_server(tmp_path_factory):
+    """Like asyncssh_server, but every stat reports size 0."""
+    yield from _serve(
+        tmp_path_factory.mktemp("zero-size-root"), _ZeroSizeSFTPServer
+    )
 
 
 def _handler_run(self):

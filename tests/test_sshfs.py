@@ -307,6 +307,65 @@ def test_cp_file_copy_data_creates(copydata_fs, copydata_dir):
 
 
 @requires_copy_data
+def test_cp_file_copy_data_ignores_reported_size(zero_size_server):
+    # Sources whose stat lies about the size (procfs, sysfs) must be
+    # copied whole: the copy runs to the source's real end of file and
+    # never sizes the destination from a stat snapshot.
+    host, port, root = zero_size_server
+    fs = SSHFileSystem(
+        host=host, port=port, username="user", client_keys=[USERS["user"]]
+    )
+    try:
+        (root / "src").write_bytes(b"payload" * 1000)
+        assert fs.info("/src")["size"] == 0
+
+        fs.cp_file("/src", "/dst")
+        assert fs._supports_remote_copy is True
+        assert (root / "dst").read_bytes() == b"payload" * 1000
+    finally:
+        with suppress(Exception):
+            sync(fs.loop, fs._stack.aclose, timeout=5)
+
+
+def test_remote_copy_keeps_mode_zero(fs, monkeypatch):
+    # A mode of 0 is a valid mode, not a missing one: it must be
+    # requested as-is instead of falling back to the server's default
+    # (SFTP v4+ reports it as permissions == 0, since the file type
+    # lives in a separate field).
+    opened = []
+
+    class _File:
+        async def stat(self):
+            return SFTPAttrs(permissions=0)
+
+        async def close(self):
+            pass
+
+    class Channel:
+        supports_remote_copy = True
+
+        def encode(self, path):
+            return path.encode() if isinstance(path, str) else path
+
+        async def isdir(self, path):
+            return False
+
+        async def open(self, path, *args, **kwargs):
+            opened.append((path, args))
+            return _File()
+
+        async def remote_copy(self, src, dst):
+            pass
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", True)
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+
+    fs.cp_file("/src", "/dst")
+    _dst_path, dst_args = opened[-1]
+    assert dst_args[1].permissions == 0
+
+
+@requires_copy_data
 def test_cp_file_copy_data_existing_destinations(copydata_fs, copydata_dir):
     # The extension path only creates destinations. Anything existing
     # -- including every alias of the source -- is left to the shell
