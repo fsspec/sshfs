@@ -1,4 +1,5 @@
 import hashlib
+import os
 import posixpath
 import secrets
 import shutil
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure, SFTPNoSuchFile
+from asyncssh.sftp import SFTPAttrs, SFTPFailure, SFTPOpUnsupported
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
@@ -75,6 +76,7 @@ def fs_hard_queue(ssh_server, user="user"):
 def strip_keys(info):
     for key in ["name", "time", "mtime", "atime"]:
         info.pop(key, None)
+    return info
 
 
 def test_fsspec_registration(ssh_server):
@@ -232,101 +234,104 @@ class _FakeChannelPool:
         return _Ctx()
 
 
-def test_cp_file_remote_copy(fs, monkeypatch):
-    # A channel advertising copy-data must be used with remote_only=True
-    # (otherwise asyncssh silently copies through the client), matching
-    # the shell fallback's semantics (content of the link target,
-    # source permissions), and the shell fallback must not run.
-    calls = []
-
-    class Channel:
-        supports_remote_copy = True
-
-        async def stat(self, path):
-            raise SFTPNoSuchFile("destination does not exist")
-
-        async def realpath(self, path):
-            return "/real" + path
-
-        async def copy(self, lpath, rpath, **kwargs):
-            calls.append((lpath, rpath, kwargs))
-
-    async def no_shell(*args, **kwargs):
-        raise AssertionError("shell fallback must not run")
-
-    monkeypatch.setattr(fs, "_supports_remote_copy", None)
-    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
-    monkeypatch.setattr(fs, "_execute", no_shell)
-
-    expected = {
-        "preserve": True,
-        "follow_symlinks": True,
-        "remote_only": True,
-    }
-    fs.cp_file("/src", "/dst")
-    assert calls == [("/src", "/dst", expected)]
-
-    # The probed capability is cached and reused.
-    fs.cp_file("/src2", "/dst2")
-    assert calls[-1] == ("/src2", "/dst2", expected)
+@pytest.fixture
+def copydata_fs(asyncssh_server):
+    host, port = asyncssh_server
+    yield SSHFileSystem(host=host, port=port, username="user")
 
 
-def test_cp_file_same_file(fs, monkeypatch):
-    # Aliased source and destination (same path or a symlink to the
-    # source) must fail before any data is touched: asyncssh's copy
-    # opens the destination with truncation and would destroy the
-    # source, while shell cp refuses the copy.
-    class Channel:
-        supports_remote_copy = True
+def test_cp_file_copy_data(copydata_fs, tmp_path):
+    fs = copydata_fs
+    src = tmp_path / "src"
+    src.write_bytes(b"payload")
+    src.chmod(0o640)
 
-        async def stat(self, path):
-            return SFTPAttrs(permissions=0o100644)
+    dst = tmp_path / "dst"
+    fs.cp_file(str(src), str(dst))
+    # the copy-data path was actually taken, not the shell fallback
+    assert fs._supports_remote_copy is True
+    assert dst.read_bytes() == b"payload"
+    # a new destination gets the source's mode
+    assert (dst.stat().st_mode & 0o7777) == 0o640
 
-        async def realpath(self, path):
-            return "/real/same"
+    # an existing destination keeps its own mode, like cp
+    dst.chmod(0o600)
+    fs.cp_file(str(src), str(dst))
+    assert dst.read_bytes() == b"payload"
+    assert (dst.stat().st_mode & 0o7777) == 0o600
 
-        async def copy(self, *args, **kwargs):
-            raise AssertionError("copy must not run on aliased paths")
 
-    async def no_shell(*args, **kwargs):
-        raise AssertionError("shell fallback must not run")
-
-    monkeypatch.setattr(fs, "_supports_remote_copy", None)
-    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
-    monkeypatch.setattr(fs, "_execute", no_shell)
+def test_cp_file_copy_data_aliases(copydata_fs, tmp_path):
+    fs = copydata_fs
+    src = tmp_path / "src"
+    src.write_bytes(b"payload")
 
     with pytest.raises(shutil.SameFileError):
-        fs.cp_file("/a", "/link-to-a")
+        fs.cp_file(str(src), str(src))
+
+    # bytes and str spellings of the same path are still aliases
+    with pytest.raises(shutil.SameFileError):
+        fs.cp_file(str(src).encode(), str(src))
+
+    link = tmp_path / "link"
+    link.symlink_to(src)
+    with pytest.raises(shutil.SameFileError):
+        fs.cp_file(str(src), str(link))
+
+    # hardlink aliases cannot be detected over SFTP; the copy must
+    # still never destroy the source
+    hard = tmp_path / "hard"
+    os.link(src, hard)
+    fs.cp_file(str(src), str(hard))
+    assert src.read_bytes() == b"payload"
+    assert hard.read_bytes() == b"payload"
 
 
-def test_cp_file_directory_destination(fs, monkeypatch):
-    # A directory destination means "copy into" with cp's resolution
-    # rules (and its own same-file protections, e.g.
-    # cp_file("/dir/file", "/dir")), so it must take the shell path
-    # even when copy-data is available.
-    calls = []
+def test_cp_file_copy_data_directory_destination(copydata_fs, tmp_path):
+    fs = copydata_fs
+    src = tmp_path / "src"
+    src.write_bytes(b"payload")
 
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    fs.cp_file(str(src), str(directory))
+    assert (directory / "src").read_bytes() == b"payload"
+
+    # "copy into" resolving to the source itself is an alias
+    with pytest.raises(shutil.SameFileError):
+        fs.cp_file(str(directory / "src"), str(directory))
+    assert (directory / "src").read_bytes() == b"payload"
+
+
+def test_mv_fallback_keeps_source_on_copy_failure(fs, monkeypatch):
+    # When posix_rename is unsupported and the copy fails, the source
+    # must survive: it may only be removed after a successful copy.
     class Channel:
-        supports_remote_copy = True
+        async def posix_rename(self, lpath, rpath):
+            raise SFTPOpUnsupported("posix-rename not supported")
 
-        async def stat(self, path):
-            return SFTPAttrs(permissions=0o040755)
+    removed = []
 
-        async def realpath(self, path):
-            raise AssertionError("realpath not needed for dir targets")
+    async def failing_cp(*args, **kwargs):
+        raise OSError("copy failed")
 
-        async def copy(self, *args, **kwargs):
-            raise AssertionError("copy must not run for dir targets")
+    async def record_rm(path, **kwargs):
+        removed.append(path)
 
-    async def record_shell(cmd, **kwargs):
-        calls.append(cmd)
-
-    monkeypatch.setattr(fs, "_supports_remote_copy", None)
     monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
-    monkeypatch.setattr(fs, "_execute", record_shell)
+    monkeypatch.setattr(fs, "_cp_file", failing_cp)
+    monkeypatch.setattr(fs, "_rm_file", record_rm)
 
-    fs.cp_file("/dir/file", "/dir")
-    assert calls == ["cp /dir/file /dir"]
+    with pytest.raises(OSError):
+        fs.mv("/src", "/dst")
+    assert removed == []
+
+    async def ok_cp(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(fs, "_cp_file", ok_cp)
+    fs.mv("/src", "/dst")
+    assert removed == ["/src"]
 
 
 @pytest.mark.parametrize("legacy_asyncssh", [False, True])
