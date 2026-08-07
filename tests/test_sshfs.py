@@ -316,7 +316,11 @@ def test_cp_file_copy_data_ignores_reported_size(zero_size_server):
     # never sizes the destination from a stat snapshot.
     host, port, root, _version = zero_size_server
     fs = SSHFileSystem(
-        host=host, port=port, username="user", client_keys=[USERS["user"]]
+        host=host,
+        port=port,
+        username="user",
+        client_keys=[USERS["user"]],
+        skip_instance_cache=True,
     )
     try:
         name = secrets.token_hex(4)
@@ -335,8 +339,7 @@ def test_remote_copy_keeps_mode_zero(fs, monkeypatch):
     # A mode of 0 is a valid mode, not a missing one: it must be
     # carried over instead of falling back to the server's default
     # (SFTP v4+ reports it as permissions == 0, since the file type
-    # lives in a separate field). Only owner-write is added, so no
-    # group or other bit appears.
+    # lives in a separate field).
     opened = []
 
     class _File:
@@ -367,7 +370,7 @@ def test_remote_copy_keeps_mode_zero(fs, monkeypatch):
 
     fs.cp_file("/src", "/dst")
     _dst_path, dst_args = opened[-1]
-    assert dst_args[1].permissions == 0o200
+    assert dst_args[1].permissions == 0
 
 
 @requires_copy_data
@@ -447,10 +450,31 @@ def test_copydata_server_negotiates_expected_version(
 
 
 @requires_copy_data
-def test_cp_file_copy_data_unreadable_source_mode(copydata_fs, copydata_dir):
-    # A source without owner-write keeps its group/other bits and
-    # gains only owner-write, so the shell fallback could still write
-    # the file if the copy were denied.
+def test_info_reports_type_on_every_version(copydata_fs, copydata_dir):
+    # SFTP v4+ reports the file type in its own field and leaves only
+    # the permission bits in `permissions`, so the type must not be
+    # decoded from the mode alone.
+    fs = copydata_fs
+    local, remote = copydata_dir
+    (local / "file").write_bytes(b"payload")
+    (local / "dir").mkdir()
+    (local / "link").symlink_to("file")
+
+    assert fs.info(remote + "/file")["type"] == "file"
+    assert fs.info(remote + "/dir")["type"] == "directory"
+    assert fs.isdir(remote + "/dir")
+    assert fs.isfile(remote + "/file")
+    assert {i["type"] for i in fs.ls(remote)} == {
+        "file",
+        "directory",
+        "link",
+    }
+
+
+@requires_copy_data
+def test_cp_file_copy_data_read_only_source_mode(copydata_fs, copydata_dir):
+    # A read-only source keeps its exact mode, like cp: the copy must
+    # not widen it just because the extension was used.
     fs = copydata_fs
     local, remote = copydata_dir
     (local / "src").write_bytes(b"payload")
@@ -458,7 +482,7 @@ def test_cp_file_copy_data_unreadable_source_mode(copydata_fs, copydata_dir):
 
     fs.cp_file(remote + "/src", remote + "/dst")
     assert (local / "dst").read_bytes() == b"payload"
-    assert ((local / "dst").stat().st_mode & 0o077) == 0
+    assert ((local / "dst").stat().st_mode & 0o7777) == 0o400
 
 
 @requires_copy_data
@@ -613,9 +637,13 @@ def test_cp_file_copy_data_denied(fs, monkeypatch):
     assert fs._supports_remote_copy is False
 
 
-def test_mv_fallback_keeps_source_on_copy_failure(fs, monkeypatch):
-    # When posix_rename is unsupported and the copy fails, the source
-    # must survive: it may only be removed after a successful copy.
+def test_mv_falls_back_to_remote_mv(fs, monkeypatch):
+    # When neither rename applies, the move is handed to the remote mv
+    # rather than copied and deleted: a copy only proves that bytes
+    # reached an open handle, so deleting the source afterwards could
+    # destroy the only remaining copy of the data.
+    events = []
+
     class Channel:
         async def posix_rename(self, lpath, rpath):
             raise SFTPOpUnsupported("posix-rename not supported")
@@ -623,28 +651,42 @@ def test_mv_fallback_keeps_source_on_copy_failure(fs, monkeypatch):
         async def rename(self, lpath, rpath):
             raise SFTPFailure("destination exists")
 
-    removed = []
+    async def fail_cp(*args, **kwargs):
+        raise AssertionError("mv must not copy and delete")
 
-    async def failing_cp(*args, **kwargs):
-        raise OSError("copy failed")
+    async def fail_rm(*args, **kwargs):
+        raise AssertionError("mv must not remove the source itself")
 
-    async def record_rm(path, **kwargs):
-        removed.append(path)
+    async def record_shell(cmd, **kwargs):
+        events.append(cmd)
 
     monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
-    monkeypatch.setattr(fs, "_cp_file", failing_cp)
-    monkeypatch.setattr(fs, "_rm_file", record_rm)
+    monkeypatch.setattr(fs, "_cp_file", fail_cp)
+    monkeypatch.setattr(fs, "_rm_file", fail_rm)
+    monkeypatch.setattr(fs, "_execute", record_shell)
 
-    with pytest.raises(OSError):
-        fs.mv("/src", "/dst")
-    assert removed == []
-
-    async def ok_cp(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(fs, "_cp_file", ok_cp)
     fs.mv("/src", "/dst")
-    assert removed == ["/src"]
+    assert events == ["mv -- /src /dst"]
+
+
+def test_mv_propagates_rename_errors(fs, monkeypatch):
+    # A denied rename is an answer, not a reason to try something with
+    # different semantics.
+    class Channel:
+        async def posix_rename(self, lpath, rpath):
+            raise SFTPOpUnsupported("posix-rename not supported")
+
+        async def rename(self, lpath, rpath):
+            raise SFTPPermissionDenied("rename denied by policy")
+
+    async def fail_shell(*args, **kwargs):
+        raise AssertionError("a denied rename must not reach the shell")
+
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", fail_shell)
+
+    with pytest.raises(PermissionError):
+        fs.mv("/src", "/dst")
 
 
 @pytest.mark.parametrize("legacy_asyncssh", [False, True])
