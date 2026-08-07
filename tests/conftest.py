@@ -42,9 +42,11 @@ class _ZeroSizeSFTPServer(asyncssh.SFTPServer):
         return self._zero(super().fstat(file_obj))
 
 
-def _serve(root, sftp_server=asyncssh.SFTPServer):
+def _serve(root, sftp_server=asyncssh.SFTPServer, sftp_version=3):
     """Start an authenticated SFTP server chrooted to `root` on its own
-    event loop thread. Yields (host, port, root)."""
+    event loop thread. Yields (host, port, root, sftp_version)."""
+    if not hasattr(asyncssh.SFTPClient, "supports_remote_copy"):
+        pytest.skip("asyncssh without copy-data support (< 2.19)")
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
@@ -56,11 +58,12 @@ def _serve(root, sftp_server=asyncssh.SFTPServer):
             server_host_keys=[_USER_KEY],
             server_factory=_TestSSHServer,
             sftp_factory=lambda chan: sftp_server(chan, chroot=str(root)),
+            sftp_version=sftp_version,
         )
 
     server = asyncio.run_coroutine_threadsafe(_listen(), loop).result(30)
     try:
-        yield "127.0.0.1", server.get_port(), root
+        yield "127.0.0.1", server.get_port(), root, sftp_version
     finally:
 
         async def _shutdown():
@@ -83,13 +86,19 @@ def _serve(root, sftp_server=asyncssh.SFTPServer):
         loop.close()
 
 
-@pytest.fixture(scope="session")
-def asyncssh_server(tmp_path_factory):
+@pytest.fixture(scope="session", params=[3, 4], ids=["sftpv3", "sftpv4"])
+def asyncssh_server(tmp_path_factory, request):
     """SFTP server that, unlike the paramiko-based mockssh fixture,
     implements the copy-data and limits extensions. Authenticated with
     the test user key and chrooted to a fresh directory; yields
-    (host, port, root) where the remote "/" maps to root."""
-    yield from _serve(tmp_path_factory.mktemp("asyncssh-root"))
+    (host, port, root, version) where the remote "/" maps to root.
+    Runs once per
+    SFTP protocol generation: v4+ moves the file type out of the
+    permission bits."""
+    yield from _serve(
+        tmp_path_factory.mktemp(f"asyncssh-root-v{request.param}"),
+        sftp_version=request.param,
+    )
 
 
 @pytest.fixture(scope="session")

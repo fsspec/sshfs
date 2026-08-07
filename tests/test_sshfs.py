@@ -9,6 +9,7 @@ from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import fsspec
 import pytest
@@ -79,6 +80,11 @@ def fs_hard_queue(ssh_server, user="user"):
         client_keys=[USERS[user]],
         pool_type=SFTPHardChannelPool,
     )
+
+
+async def _channel_version(fs):
+    async with fs._pool.get() as channel:
+        return channel.version
 
 
 def strip_keys(info):
@@ -242,20 +248,17 @@ class _FakeChannelPool:
         return _Ctx()
 
 
-@pytest.fixture(scope="session", params=[None, 4], ids=["sftpv3", "sftpv4"])
-def copydata_fs(asyncssh_server, request):
-    # v4+ separates the file type from `permissions`, so both protocol
-    # generations must satisfy the same contract.
-    host, port, _root = asyncssh_server
-    extra = {}
-    if request.param is not None:
-        extra["sftp_client_kwargs"] = {"sftp_version": request.param}
+@pytest.fixture(scope="session")
+def copydata_fs(asyncssh_server):
+    # The server fixture runs the whole suite once per SFTP protocol
+    # generation; the client negotiates up to whatever it offers.
+    host, port, _root, version = asyncssh_server
     fs = SSHFileSystem(
         host=host,
         port=port,
         username="user",
         client_keys=[USERS["user"]],
-        **extra,
+        sftp_client_kwargs={"sftp_version": version},
     )
     yield fs
     # Close the connection so the server fixture can shut its loop
@@ -266,7 +269,7 @@ def copydata_fs(asyncssh_server, request):
 
 @pytest.fixture
 def copydata_dir(asyncssh_server, request):
-    _host, _port, root = asyncssh_server
+    _host, _port, root, _version = asyncssh_server
     # unique per invocation so pytest-rerunfailures retries get a
     # fresh directory
     local = root / f"{request.node.name}-{secrets.token_hex(4)}"
@@ -311,17 +314,18 @@ def test_cp_file_copy_data_ignores_reported_size(zero_size_server):
     # Sources whose stat lies about the size (procfs, sysfs) must be
     # copied whole: the copy runs to the source's real end of file and
     # never sizes the destination from a stat snapshot.
-    host, port, root = zero_size_server
+    host, port, root, _version = zero_size_server
     fs = SSHFileSystem(
         host=host, port=port, username="user", client_keys=[USERS["user"]]
     )
     try:
-        (root / "src").write_bytes(b"payload" * 1000)
-        assert fs.info("/src")["size"] == 0
+        name = secrets.token_hex(4)
+        (root / f"src-{name}").write_bytes(b"payload" * 1000)
+        assert fs.info(f"/src-{name}")["size"] == 0
 
-        fs.cp_file("/src", "/dst")
+        fs.cp_file(f"/src-{name}", f"/dst-{name}")
         assert fs._supports_remote_copy is True
-        assert (root / "dst").read_bytes() == b"payload" * 1000
+        assert (root / f"dst-{name}").read_bytes() == b"payload" * 1000
     finally:
         with suppress(Exception):
             sync(fs.loop, fs._stack.aclose, timeout=5)
@@ -329,9 +333,10 @@ def test_cp_file_copy_data_ignores_reported_size(zero_size_server):
 
 def test_remote_copy_keeps_mode_zero(fs, monkeypatch):
     # A mode of 0 is a valid mode, not a missing one: it must be
-    # requested as-is instead of falling back to the server's default
+    # carried over instead of falling back to the server's default
     # (SFTP v4+ reports it as permissions == 0, since the file type
-    # lives in a separate field).
+    # lives in a separate field). Only owner-write is added, so no
+    # group or other bit appears.
     opened = []
 
     class _File:
@@ -362,7 +367,7 @@ def test_remote_copy_keeps_mode_zero(fs, monkeypatch):
 
     fs.cp_file("/src", "/dst")
     _dst_path, dst_args = opened[-1]
-    assert dst_args[1].permissions == 0
+    assert dst_args[1].permissions == 0o200
 
 
 @requires_copy_data
@@ -413,6 +418,7 @@ def test_cp_file_copy_data_never_redirects(copydata_fs, copydata_dir):
     assert not (local / "missing").exists()
 
 
+@requires_copy_data
 def test_mv_hardlink_alias(copydata_fs, copydata_dir):
     # POSIX rename between two names of the same inode is a no-op:
     # the move succeeds with both names surviving and no data lost.
@@ -427,9 +433,132 @@ def test_mv_hardlink_alias(copydata_fs, copydata_dir):
     assert (local / "hard").read_bytes() == b"payload"
 
 
+@requires_copy_data
+def test_copydata_server_negotiates_expected_version(
+    copydata_fs, asyncssh_server
+):
+    # The functional suite claims to cover both protocol generations,
+    # so the negotiated version must actually be the server's.
+    _host, _port, _root, version = asyncssh_server
+    negotiated = sync(
+        copydata_fs.loop, _channel_version, copydata_fs, timeout=10
+    )
+    assert negotiated == version
+
+
+@requires_copy_data
+def test_cp_file_copy_data_unreadable_source_mode(copydata_fs, copydata_dir):
+    # A source without owner-write keeps its group/other bits and
+    # gains only owner-write, so the shell fallback could still write
+    # the file if the copy were denied.
+    fs = copydata_fs
+    local, remote = copydata_dir
+    (local / "src").write_bytes(b"payload")
+    (local / "src").chmod(0o400)
+
+    fs.cp_file(remote + "/src", remote + "/dst")
+    assert (local / "dst").read_bytes() == b"payload"
+    assert ((local / "dst").stat().st_mode & 0o077) == 0
+
+
+@requires_copy_data
+def test_mv_uses_standard_rename(copydata_fs, copydata_dir):
+    # Without posix-rename, a plain rename still keeps the object's
+    # identity: a symlink must stay a symlink instead of being
+    # flattened into a copy of its target.
+    fs = copydata_fs
+    local, remote = copydata_dir
+    (local / "target").write_bytes(b"payload")
+    (local / "link").symlink_to("target")
+
+    async def _no_posix_rename(*args, **kwargs):
+        raise SFTPOpUnsupported("posix-rename not supported")
+
+    with mock.patch.object(SFTPClient, "posix_rename", _no_posix_rename):
+        fs.mv(remote + "/link", remote + "/moved")
+
+    assert (local / "moved").is_symlink()
+    assert os.readlink(local / "moved") == "target"
+
+
+def test_remote_copy_unknown_mode_is_private(fs, monkeypatch):
+    # A server that denies fstat must not cause the destination to be
+    # created with the server's default (world-readable) mode.
+    opened = []
+
+    class _File:
+        async def stat(self):
+            raise SFTPPermissionDenied("fstat denied")
+
+        async def close(self):
+            pass
+
+    class Channel:
+        supports_remote_copy = True
+
+        def encode(self, path):
+            return path.encode() if isinstance(path, str) else path
+
+        async def isdir(self, path):
+            return False
+
+        async def open(self, path, *args, **kwargs):
+            opened.append((path, args))
+            return _File()
+
+        async def remote_copy(self, src, dst):
+            pass
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", True)
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+
+    fs.cp_file("/src", "/dst")
+    _path, args = opened[-1]
+    assert args[1].permissions == 0o600
+
+
+def test_cp_file_copy_data_denied_is_not_cached(fs, monkeypatch):
+    # A denial can depend on the operands, so it must not disable the
+    # extension for every later copy on the connection.
+    events = []
+
+    class _File:
+        async def stat(self):
+            return SFTPAttrs(permissions=0o100644)
+
+        async def close(self):
+            pass
+
+    class Channel:
+        supports_remote_copy = True
+
+        def encode(self, path):
+            return path.encode() if isinstance(path, str) else path
+
+        async def isdir(self, path):
+            return False
+
+        async def open(self, path, *args, **kwargs):
+            return _File()
+
+        async def remote_copy(self, src, dst):
+            raise SFTPPermissionDenied("denied for these operands")
+
+    async def record_shell(cmd, **kwargs):
+        events.append(cmd)
+
+    monkeypatch.setattr(fs, "_supports_remote_copy", None)
+    monkeypatch.setattr(fs, "_pool", _FakeChannelPool(Channel()))
+    monkeypatch.setattr(fs, "_execute", record_shell)
+
+    fs.cp_file("/denied", "/dst")
+    assert events == ["cp -- /denied /dst"]
+    assert fs._supports_remote_copy is True
+
+
 def test_cp_file_copy_data_denied(fs, monkeypatch):
-    # copy-data advertised but denied by server policy: the capability
-    # is re-cached as unsupported and the copy falls back to the shell,
+    # copy-data advertised but not implemented: the capability is
+    # re-cached as unsupported and the copy falls back to the shell,
     # which overwrites the empty file created by the exclusive open.
     events = []
 
@@ -470,7 +599,7 @@ def test_cp_file_copy_data_denied(fs, monkeypatch):
             return _OpenResult()
 
         async def remote_copy(self, src, dst):
-            raise SFTPPermissionDenied("denied by policy")
+            raise SFTPOpUnsupported("advertised but not implemented")
 
     async def record_shell(cmd, **kwargs):
         events.append(("shell", cmd))
@@ -480,7 +609,7 @@ def test_cp_file_copy_data_denied(fs, monkeypatch):
     monkeypatch.setattr(fs, "_execute", record_shell)
 
     fs.cp_file("/src", "/dst")
-    assert ("shell", "cp /src /dst") in events
+    assert ("shell", "cp -- /src /dst") in events
     assert fs._supports_remote_copy is False
 
 
@@ -490,6 +619,9 @@ def test_mv_fallback_keeps_source_on_copy_failure(fs, monkeypatch):
     class Channel:
         async def posix_rename(self, lpath, rpath):
             raise SFTPOpUnsupported("posix-rename not supported")
+
+        async def rename(self, lpath, rpath):
+            raise SFTPFailure("destination exists")
 
     removed = []
 
@@ -544,7 +676,7 @@ def test_cp_file_shell_fallback(fs, monkeypatch, legacy_asyncssh):
 
     fs.cp_file("/src", "/dst")
     fs.cp_file("/src2", "/dst2")
-    assert calls == ["cp /src /dst", "cp /src2 /dst2"]
+    assert calls == ["cp -- /src /dst", "cp -- /src2 /dst2"]
     assert len(pool_uses) == 1
 
 
