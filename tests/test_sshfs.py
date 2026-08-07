@@ -242,14 +242,20 @@ class _FakeChannelPool:
         return _Ctx()
 
 
-@pytest.fixture(scope="session")
-def copydata_fs(asyncssh_server):
+@pytest.fixture(scope="session", params=[None, 4], ids=["sftpv3", "sftpv4"])
+def copydata_fs(asyncssh_server, request):
+    # v4+ separates the file type from `permissions`, so both protocol
+    # generations must satisfy the same contract.
     host, port, _root = asyncssh_server
+    extra = {}
+    if request.param is not None:
+        extra["sftp_client_kwargs"] = {"sftp_version": request.param}
     fs = SSHFileSystem(
         host=host,
         port=port,
         username="user",
         client_keys=[USERS["user"]],
+        **extra,
     )
     yield fs
     # Close the connection so the server fixture can shut its loop
@@ -348,10 +354,24 @@ def test_cp_file_copy_data_never_redirects(copydata_fs, copydata_dir):
     assert not (local / "missing").exists()
 
 
+def test_mv_hardlink_alias(copydata_fs, copydata_dir):
+    # POSIX rename between two names of the same inode is a no-op:
+    # the move succeeds with both names surviving and no data lost.
+    fs = copydata_fs
+    local, remote = copydata_dir
+    src = local / "src"
+    src.write_bytes(b"payload")
+    os.link(src, local / "hard")
+
+    fs.mv(remote + "/src", remote + "/hard")
+    assert src.read_bytes() == b"payload"
+    assert (local / "hard").read_bytes() == b"payload"
+
+
 def test_cp_file_copy_data_denied(fs, monkeypatch):
-    # copy-data advertised but denied by server policy: the created
-    # destination is removed, the capability is re-cached as
-    # unsupported, and the copy falls back to the shell.
+    # copy-data advertised but denied by server policy: the capability
+    # is re-cached as unsupported and the copy falls back to the shell,
+    # which overwrites the empty file created by the exclusive open.
     events = []
 
     class _File:
@@ -393,9 +413,6 @@ def test_cp_file_copy_data_denied(fs, monkeypatch):
         async def remote_copy(self, src, dst):
             raise SFTPPermissionDenied("denied by policy")
 
-        async def remove(self, path):
-            events.append(("remove", path))
-
     async def record_shell(cmd, **kwargs):
         events.append(("shell", cmd))
 
@@ -404,7 +421,6 @@ def test_cp_file_copy_data_denied(fs, monkeypatch):
     monkeypatch.setattr(fs, "_execute", record_shell)
 
     fs.cp_file("/src", "/dst")
-    assert ("remove", "/dst") in events
     assert ("shell", "cp /src /dst") in events
     assert fs._supports_remote_copy is False
 
