@@ -1,7 +1,6 @@
 import asyncio
 import posixpath
 import shlex
-import shutil
 import stat
 import weakref
 from contextlib import AsyncExitStack, suppress
@@ -9,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import asyncssh
-from asyncssh.sftp import SFTPOpUnsupported
+from asyncssh.sftp import SFTPError, SFTPOpUnsupported, SFTPPermissionDenied
 from fsspec.asyn import (
     AsyncFileSystem,
     FSTimeoutError,
@@ -262,60 +261,80 @@ class SSHFileSystem(AsyncFileSystem):
             )
 
     async def _remote_copy_file(self, channel, lpath, rpath):
-        # The data is written through the destination's existing file
-        # (FXF_CREAT without FXF_TRUNC, truncated to the source length
-        # afterwards), never by replacing its directory entry. That is
-        # cp's own contract: the destination inode with its mode,
-        # owner, xattrs and hardlink peers survives, a read-only
-        # destination is refused at open, and a new file's requested
-        # mode passes through the server's umask. It also makes
-        # aliases safe by construction -- copying a file onto itself
-        # writes its bytes over themselves and the final truncation to
-        # its own length changes nothing -- which matters because
-        # hardlink aliases carry no inode over SFTP and cannot be
-        # detected. Detectable aliases (path and symlink, compared via
-        # realpath normalized to bytes: realpath preserves the
-        # str/bytes type of its argument) are refused like cp refuses
-        # them.
-        src, dst = await asyncio.gather(
-            channel.realpath(lpath), channel.realpath(rpath)
-        )
-        if channel.encode(src) == channel.encode(dst):
-            raise shutil.SameFileError(
-                f"{lpath!r} and {rpath!r} are the same file"
-            )
+        """Copy over the copy-data extension. Returns False when the
+        copy must be handled by the shell fallback instead."""
+        # The remote copy only ever CREATES the destination (FXF_EXCL)
+        # and copies until the source's end of file. Everything an
+        # in-place overwrite would need is unsolvable over SFTP: a
+        # stale pre-copy size corrupts sources whose stat lies (procfs)
+        # or that change while copying, a post-copy truncate can be
+        # denied (fsetstat policy) after the destination was already
+        # modified, a pre-copy truncate destroys sources aliased behind
+        # an undetectable hardlink, and replacing the directory entry
+        # loses the inode. Existing destinations therefore go to the
+        # shell fallback, whose cp implements those semantics natively.
+        # FXF_EXCL also refuses to create through a dangling symlink,
+        # and guarantees a failed copy can be cleaned up completely --
+        # the file it made is ours.
 
         # A directory destination means "copy into": like cp, resolve
-        # it against the source's basename. The copy itself keeps the
-        # requested path -- canonicalizing it would change meaning for
-        # trailing slashes and symlinks. isdir() checks the file type
-        # on every SFTP version (v4+ attributes carry no type bits in
-        # `permissions`) and is False for missing paths.
+        # it against the source's basename. isdir() checks the file
+        # type on every SFTP version (v4+ attributes carry no type bits
+        # in `permissions`) and is False for missing paths.
         if await channel.isdir(rpath):
             rpath = posixpath.join(
                 channel.encode(rpath),
                 posixpath.basename(channel.encode(lpath)),
             )
-            resolved = await channel.realpath(rpath)
-            if channel.encode(src) == channel.encode(resolved):
-                raise shutil.SameFileError(
-                    f"{lpath!r} and {rpath!r} are the same file"
-                )
 
+        # The source is opened before the destination is created so
+        # that a missing source cannot leave an empty destination.
         async with channel.open(lpath, "rb", block_size=0) as src_file:
             src_attrs = await src_file.stat()
             # Like cp for new files: special bits stripped, and the
-            # server applies its umask to the requested mode. Existing
-            # destinations keep their attributes untouched.
-            mode = (src_attrs.permissions or 0o666) & 0o777
-            async with channel.open(
-                rpath,
-                asyncssh.FXF_WRITE | asyncssh.FXF_CREAT,
-                asyncssh.SFTPAttrs(permissions=mode),
-                block_size=0,
-            ) as dst_file:
+            # server applies its umask to the requested mode. A mode of
+            # 0 is a valid mode, only a missing one falls back to the
+            # server default.
+            if src_attrs.permissions is None:
+                attrs = asyncssh.SFTPAttrs()
+            else:
+                attrs = asyncssh.SFTPAttrs(
+                    permissions=src_attrs.permissions & 0o777
+                )
+            try:
+                dst_file = await channel.open(
+                    rpath,
+                    asyncssh.FXF_WRITE
+                    | asyncssh.FXF_CREAT
+                    | asyncssh.FXF_EXCL,
+                    attrs,
+                    block_size=0,
+                )
+            except (OSError, SFTPError):
+                # Existing destination (any alias of the source is one),
+                # dangling symlink, missing parent, trailing slash on a
+                # file: the shell fallback owns these forms.
+                return False
+
+            try:
                 await channel.remote_copy(src_file, dst_file)
-                await dst_file.truncate(src_attrs.size)
+            except (SFTPOpUnsupported, SFTPPermissionDenied):
+                # Advertised but denied (e.g. an OpenSSH allow/deny
+                # policy): remove the file we created and stop trying
+                # the extension on this connection.
+                await dst_file.close()
+                with suppress(OSError, SFTPError):
+                    await channel.remove(rpath)
+                self._supports_remote_copy = False
+                return False
+            except BaseException:
+                await dst_file.close()
+                with suppress(OSError, SFTPError):
+                    await channel.remove(rpath)
+                raise
+            else:
+                await dst_file.close()
+        return True
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
@@ -323,17 +342,27 @@ class SSHFileSystem(AsyncFileSystem):
         # 2.19 with an OpenSSH >= 9.0 server) needs no shell access and
         # keeps the data on the server. The capability is
         # per-connection, so it is cached after the first probe and the
-        # shell fallback never touches the channel pool again. Without
-        # the extension, fall back to a shell cp.
+        # shell fallback never touches the channel pool again. The
+        # extension path only creates new destinations; everything else
+        # falls back to a shell cp.
         if self._supports_remote_copy is not False:
             async with self._pool.get() as channel:
                 if self._supports_remote_copy is None:
                     self._supports_remote_copy = getattr(
                         channel, "supports_remote_copy", False
                     )
-                if self._supports_remote_copy:
-                    return await self._remote_copy_file(channel, lpath, rpath)
+                if (
+                    self._supports_remote_copy
+                    and await self._remote_copy_file(channel, lpath, rpath)
+                ):
+                    return
 
+        # The shell command needs text; bytes paths (accepted by the
+        # SFTP operations) are decoded with the SFTP default encoding.
+        if isinstance(lpath, bytes):
+            lpath = lpath.decode("utf-8")
+        if isinstance(rpath, bytes):
+            rpath = rpath.decode("utf-8")
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
