@@ -1,5 +1,6 @@
 import asyncio
 import posixpath
+import secrets
 import shlex
 import shutil
 import stat
@@ -225,12 +226,11 @@ class SSHFileSystem(AsyncFileSystem):
         # Some systems doesn't natively support posix_rename
         # which is an extension to the original SFTP protocol.
         # In that case we are going to copy the file and delete
-        # it.
+        # it. The source must only be removed after the copy fully
+        # succeeded.
 
-        try:
-            await self._cp_file(lpath, rpath)
-        finally:
-            await self._rm_file(lpath)
+        await self._cp_file(lpath, rpath)
+        await self._rm_file(lpath)
 
     @wrap_exceptions
     async def _put_file(
@@ -262,15 +262,75 @@ class SSHFileSystem(AsyncFileSystem):
                 progress_handler=as_progress_handler(callback),
             )
 
+    async def _remote_copy_file(self, channel, lpath, rpath):
+        # copy-data must never be pointed at an aliased destination:
+        # asyncssh opens it with truncation and would destroy the
+        # source, where shell cp refuses the copy. The realpath
+        # comparison (normalized to bytes: realpath preserves the
+        # str/bytes type of its argument) catches path and symlink
+        # aliases; hardlinks carry no inode over SFTP and cannot be
+        # detected, so the data is written to a temporary name and
+        # renamed over the destination, which is safe for any alias.
+        src, dst = await asyncio.gather(
+            channel.realpath(lpath), channel.realpath(rpath)
+        )
+        src, dst = channel.encode(src), channel.encode(dst)
+
+        # A directory destination means "copy into": like cp, resolve
+        # it against the source's basename. isdir() is False for
+        # missing paths and checks the file type on every SFTP version
+        # (v4+ attributes carry no type bits in `permissions`).
+        if await channel.isdir(dst):
+            dst = channel.encode(
+                await channel.realpath(
+                    posixpath.join(
+                        dst, posixpath.basename(channel.encode(lpath))
+                    )
+                )
+            )
+
+        if src == dst:
+            raise shutil.SameFileError(
+                f"{lpath!r} and {rpath!r} are the same file"
+            )
+
+        # cp keeps an existing destination's mode and gives a new file
+        # the source's mode (the remote umask is unknowable over SFTP
+        # and cannot be applied). The mode is set on the temporary file
+        # before the rename, so a failure never leaves the destination
+        # changed. Timestamps are deliberately not preserved, like cp.
+        src_attrs = await channel.stat(lpath)
+        dst_attrs = None
+        with suppress(SFTPNoSuchFile):
+            dst_attrs = await channel.stat(dst)
+        mode = (dst_attrs or src_attrs).permissions & 0o7777
+
+        tmp = dst + f".{secrets.token_hex(8)}.part".encode()
+        try:
+            await channel.copy(
+                lpath, tmp, follow_symlinks=True, remote_only=True
+            )
+            await channel.setstat(tmp, asyncssh.SFTPAttrs(permissions=mode))
+            try:
+                await channel.posix_rename(tmp, dst)
+            except SFTPOpUnsupported:
+                # SFTPv3 RENAME refuses existing destinations.
+                with suppress(SFTPNoSuchFile):
+                    await channel.remove(dst)
+                await channel.rename(tmp, dst)
+        except BaseException:
+            with suppress(Exception):
+                await channel.remove(tmp)
+            raise
+
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
         # Server-side copy through the copy-data extension (asyncssh >=
         # 2.19 with an OpenSSH >= 9.0 server) needs no shell access and
-        # keeps the data on the server. remote_only guards against
-        # asyncssh silently copying through the client instead. The
-        # capability is per-connection, so it is cached after the first
-        # probe and the shell fallback never touches the channel pool
-        # again. Without the extension, fall back to a shell cp.
+        # keeps the data on the server. The capability is
+        # per-connection, so it is cached after the first probe and the
+        # shell fallback never touches the channel pool again. Without
+        # the extension, fall back to a shell cp.
         if self._supports_remote_copy is not False:
             async with self._pool.get() as channel:
                 if self._supports_remote_copy is None:
@@ -278,42 +338,7 @@ class SSHFileSystem(AsyncFileSystem):
                         channel, "supports_remote_copy", False
                     )
                 if self._supports_remote_copy:
-                    # The remote copy handles only the plain
-                    # file-to-file form. A directory destination means
-                    # "copy into" with cp's resolution rules (including
-                    # its same-file protections), so that form is
-                    # delegated to the shell fallback below.
-                    dst_attrs = None
-                    with suppress(SFTPNoSuchFile):
-                        dst_attrs = await channel.stat(rpath)
-                    if dst_attrs is None or not stat.S_ISDIR(
-                        dst_attrs.permissions
-                    ):
-                        # asyncssh opens the destination with truncation
-                        # and no same-file check, so aliased paths (same
-                        # path or a symlink to the source) would destroy
-                        # the source; shell cp refuses them instead.
-                        # Hardlink aliases cannot be detected over SFTP
-                        # (no inode in attrs).
-                        src, dst = await asyncio.gather(
-                            channel.realpath(lpath),
-                            channel.realpath(rpath),
-                        )
-                        if src == dst:
-                            raise shutil.SameFileError(
-                                f"{lpath!r} and {rpath!r} " "are the same file"
-                            )
-                        # preserve and follow_symlinks match what the
-                        # shell cp fallback does: copy the link
-                        # target's content and keep the source
-                        # permissions.
-                        return await channel.copy(
-                            lpath,
-                            rpath,
-                            preserve=True,
-                            follow_symlinks=True,
-                            remote_only=True,
-                        )
+                    return await self._remote_copy_file(channel, lpath, rpath)
 
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
