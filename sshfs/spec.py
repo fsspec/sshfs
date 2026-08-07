@@ -260,6 +260,24 @@ class SSHFileSystem(AsyncFileSystem):
                 progress_handler=as_progress_handler(callback),
             )
 
+    @staticmethod
+    def _shell_paths(*paths):
+        # Shell commands are text. Byte paths are decoded as UTF-8;
+        # paths that are not valid UTF-8 can only be used with the
+        # operations that stay on the SFTP channel.
+        decoded = []
+        for path in paths:
+            if isinstance(path, bytes):
+                try:
+                    path = path.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"{path!r} is not valid UTF-8 and cannot be used "
+                        "in a shell command"
+                    ) from exc
+            decoded.append(path)
+        return decoded
+
     async def _remote_copy_file(self, channel, lpath, rpath):
         """Copy over the copy-data extension. Returns False when the
         copy must be handled by the shell fallback instead."""
@@ -366,13 +384,7 @@ class SSHFileSystem(AsyncFileSystem):
                 ):
                     return
 
-        # The shell command needs text: bytes paths are decoded as
-        # UTF-8. Non-UTF-8 byte paths cannot ride a shell command and
-        # only work on operations that stay on the SFTP channel.
-        if isinstance(lpath, bytes):
-            lpath = lpath.decode("utf-8")
-        if isinstance(rpath, bytes):
-            rpath = rpath.decode("utf-8")
+        lpath, rpath = self._shell_paths(lpath, rpath)
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
