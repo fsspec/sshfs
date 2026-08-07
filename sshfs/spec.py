@@ -273,9 +273,14 @@ class SSHFileSystem(AsyncFileSystem):
         # an undetectable hardlink, and replacing the directory entry
         # loses the inode. Existing destinations therefore go to the
         # shell fallback, whose cp implements those semantics natively.
-        # FXF_EXCL also refuses to create through a dangling symlink,
-        # and guarantees a failed copy can be cleaned up completely --
-        # the file it made is ours.
+        # FXF_EXCL also refuses to create through a dangling symlink.
+        #
+        # A failed or interrupted copy may leave a partial destination
+        # behind, exactly like an interrupted cp. It is deliberately
+        # never unlinked: FXF_EXCL proves this client created the
+        # inode, but over SFTP the pathname cannot be re-verified to
+        # still name that inode at cleanup time, so removing it could
+        # delete an unrelated file that raced onto the same name.
 
         # A directory destination means "copy into": like cp, resolve
         # it against the source's basename. isdir() checks the file
@@ -289,18 +294,19 @@ class SSHFileSystem(AsyncFileSystem):
 
         # The source is opened before the destination is created so
         # that a missing source cannot leave an empty destination.
-        async with channel.open(lpath, "rb", block_size=0) as src_file:
-            src_attrs = await src_file.stat()
+        src_file = await channel.open(lpath, "rb", block_size=0)
+        try:
             # Like cp for new files: special bits stripped, and the
             # server applies its umask to the requested mode. A mode of
-            # 0 is a valid mode, only a missing one falls back to the
-            # server default.
-            if src_attrs.permissions is None:
-                attrs = asyncssh.SFTPAttrs()
-            else:
-                attrs = asyncssh.SFTPAttrs(
-                    permissions=src_attrs.permissions & 0o777
-                )
+            # 0 is a valid mode; a missing one -- or a server that
+            # denies fstat -- falls back to the server default.
+            attrs = asyncssh.SFTPAttrs()
+            with suppress(OSError, SFTPError):
+                src_attrs = await src_file.stat()
+                if src_attrs.permissions is not None:
+                    attrs = asyncssh.SFTPAttrs(
+                        permissions=src_attrs.permissions & 0o777
+                    )
             try:
                 dst_file = await channel.open(
                     rpath,
@@ -320,20 +326,23 @@ class SSHFileSystem(AsyncFileSystem):
                 await channel.remote_copy(src_file, dst_file)
             except (SFTPOpUnsupported, SFTPPermissionDenied):
                 # Advertised but denied (e.g. an OpenSSH allow/deny
-                # policy): remove the file we created and stop trying
-                # the extension on this connection.
-                await dst_file.close()
-                with suppress(OSError, SFTPError):
-                    await channel.remove(rpath)
+                # policy): stop trying the extension on this connection
+                # and let the shell cp overwrite the empty file just
+                # created.
                 self._supports_remote_copy = False
+                with suppress(OSError, SFTPError):
+                    await dst_file.close()
                 return False
             except BaseException:
-                await dst_file.close()
                 with suppress(OSError, SFTPError):
-                    await channel.remove(rpath)
+                    await dst_file.close()
                 raise
-            else:
-                await dst_file.close()
+            # A close failure after writing must surface: the data may
+            # not be durable.
+            await dst_file.close()
+        finally:
+            with suppress(OSError, SFTPError):
+                await src_file.close()
         return True
 
     @wrap_exceptions
@@ -357,8 +366,9 @@ class SSHFileSystem(AsyncFileSystem):
                 ):
                     return
 
-        # The shell command needs text; bytes paths (accepted by the
-        # SFTP operations) are decoded with the SFTP default encoding.
+        # The shell command needs text: bytes paths are decoded as
+        # UTF-8. Non-UTF-8 byte paths cannot ride a shell command and
+        # only work on operations that stay on the SFTP channel.
         if isinstance(lpath, bytes):
             lpath = lpath.decode("utf-8")
         if isinstance(rpath, bytes):
