@@ -6,13 +6,15 @@ import shutil
 import tempfile
 import warnings
 from concurrent import futures
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure, SFTPOpUnsupported
+from asyncssh.sftp import SFTPAttrs, SFTPError, SFTPFailure, SFTPOpUnsupported
+from fsspec.asyn import sync
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
@@ -234,73 +236,121 @@ class _FakeChannelPool:
         return _Ctx()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def copydata_fs(asyncssh_server):
-    host, port = asyncssh_server
-    yield SSHFileSystem(host=host, port=port, username="user")
+    host, port, _root = asyncssh_server
+    fs = SSHFileSystem(
+        host=host,
+        port=port,
+        username="user",
+        client_keys=[USERS["user"]],
+    )
+    yield fs
+    # Close the connection so the server fixture can shut its loop
+    # down without cancelling live connection tasks.
+    with suppress(Exception):
+        sync(fs.loop, fs._stack.aclose, timeout=5)
 
 
-def test_cp_file_copy_data(copydata_fs, tmp_path):
+@pytest.fixture
+def copydata_dir(asyncssh_server, request):
+    _host, _port, root = asyncssh_server
+    local = root / request.node.name
+    local.mkdir()
+    # the server is chrooted to `root`, so `local` is served as this
+    # remote path
+    yield local, "/" + local.name
+
+
+def test_cp_file_copy_data(copydata_fs, copydata_dir):
     fs = copydata_fs
-    src = tmp_path / "src"
-    src.write_bytes(b"payload")
-    src.chmod(0o640)
+    local, remote = copydata_dir
+    (local / "src").write_bytes(b"payload")
+    (local / "src").chmod(0o666)
 
-    dst = tmp_path / "dst"
-    fs.cp_file(str(src), str(dst))
+    umask = os.umask(0)
+    os.umask(umask)
+
+    fs.cp_file(remote + "/src", remote + "/dst")
     # the copy-data path was actually taken, not the shell fallback
     assert fs._supports_remote_copy is True
-    assert dst.read_bytes() == b"payload"
-    # a new destination gets the source's mode
-    assert (dst.stat().st_mode & 0o7777) == 0o640
+    assert (local / "dst").read_bytes() == b"payload"
+    # a new file gets the source's mode filtered by the server's
+    # umask, like cp
+    assert ((local / "dst").stat().st_mode & 0o7777) == 0o666 & ~umask
 
-    # an existing destination keeps its own mode, like cp
-    dst.chmod(0o600)
-    fs.cp_file(str(src), str(dst))
-    assert dst.read_bytes() == b"payload"
-    assert (dst.stat().st_mode & 0o7777) == 0o600
+    # an existing destination keeps its inode: its own mode survives
+    # and hardlink peers see the update, like cp writing through the
+    # file
+    (local / "dst").chmod(0o600)
+    os.link(local / "dst", local / "peer")
+    (local / "src").write_bytes(b"new payload")
+    fs.cp_file(remote + "/src", remote + "/dst")
+    assert (local / "dst").read_bytes() == b"new payload"
+    assert ((local / "dst").stat().st_mode & 0o7777) == 0o600
+    assert (local / "peer").read_bytes() == b"new payload"
 
 
-def test_cp_file_copy_data_aliases(copydata_fs, tmp_path):
+def test_cp_file_copy_data_aliases(copydata_fs, copydata_dir):
     fs = copydata_fs
-    src = tmp_path / "src"
+    local, remote = copydata_dir
+    src = local / "src"
     src.write_bytes(b"payload")
 
     with pytest.raises(shutil.SameFileError):
-        fs.cp_file(str(src), str(src))
+        fs.cp_file(remote + "/src", remote + "/src")
 
     # bytes and str spellings of the same path are still aliases
     with pytest.raises(shutil.SameFileError):
-        fs.cp_file(str(src).encode(), str(src))
+        fs.cp_file((remote + "/src").encode(), remote + "/src")
 
-    link = tmp_path / "link"
-    link.symlink_to(src)
+    (local / "link").symlink_to("src")
     with pytest.raises(shutil.SameFileError):
-        fs.cp_file(str(src), str(link))
+        fs.cp_file(remote + "/src", remote + "/link")
 
-    # hardlink aliases cannot be detected over SFTP; the copy must
-    # still never destroy the source
-    hard = tmp_path / "hard"
-    os.link(src, hard)
-    fs.cp_file(str(src), str(hard))
+    # hardlink aliases cannot be detected over SFTP: the write-through
+    # copy puts the bytes over themselves and must leave the file,
+    # its content and the link intact
+    os.link(src, local / "hard")
+    fs.cp_file(remote + "/src", remote + "/hard")
     assert src.read_bytes() == b"payload"
-    assert hard.read_bytes() == b"payload"
+    assert (local / "hard").stat().st_ino == src.stat().st_ino
 
 
-def test_cp_file_copy_data_directory_destination(copydata_fs, tmp_path):
+def test_cp_file_copy_data_directory_destination(copydata_fs, copydata_dir):
     fs = copydata_fs
-    src = tmp_path / "src"
-    src.write_bytes(b"payload")
+    local, remote = copydata_dir
+    (local / "src").write_bytes(b"payload")
+    (local / "d").mkdir()
 
-    directory = tmp_path / "directory"
-    directory.mkdir()
-    fs.cp_file(str(src), str(directory))
-    assert (directory / "src").read_bytes() == b"payload"
+    fs.cp_file(remote + "/src", remote + "/d")
+    assert (local / "d" / "src").read_bytes() == b"payload"
 
     # "copy into" resolving to the source itself is an alias
     with pytest.raises(shutil.SameFileError):
-        fs.cp_file(str(directory / "src"), str(directory))
-    assert (directory / "src").read_bytes() == b"payload"
+        fs.cp_file(remote + "/d/src", remote + "/d")
+    assert (local / "d" / "src").read_bytes() == b"payload"
+
+
+def test_cp_file_copy_data_destination_errors(copydata_fs, copydata_dir):
+    fs = copydata_fs
+    local, remote = copydata_dir
+    (local / "src").write_bytes(b"payload")
+
+    # a read-only destination is refused at open, like cp, and stays
+    # untouched
+    ro = local / "ro"
+    ro.write_bytes(b"old")
+    ro.chmod(0o444)
+    with pytest.raises(PermissionError):
+        fs.cp_file(remote + "/src", remote + "/ro")
+    assert ro.read_bytes() == b"old"
+
+    # a trailing slash on a file destination is not a directory (the
+    # server rejects it; like mkdir, the SFTP error is passed through)
+    with pytest.raises((OSError, SFTPError)):
+        fs.cp_file(remote + "/src", remote + "/ro/")
+    assert ro.read_bytes() == b"old"
 
 
 def test_mv_fallback_keeps_source_on_copy_failure(fs, monkeypatch):
