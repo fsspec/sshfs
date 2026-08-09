@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import posixpath
 import secrets
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
+from asyncssh.misc import ChannelOpenError
 from asyncssh.sftp import SFTPAttrs, SFTPFailure
 from importlib_metadata import entry_points
 
@@ -237,6 +239,22 @@ def test_checksum(fs, remote_dir):
 
     checksum = hashlib.md5(data).hexdigest()
     assert fs.checksum(remote_dir + "/a.txt") == checksum
+
+
+def test_checksum_falls_back_to_md5sum_when_uname_session_fails():
+    checksum = "0123456789abcdef0123456789abcdef"
+    calls = []
+
+    class DummyFS:
+        async def _get_system(self):
+            raise ChannelOpenError(None, None)
+
+        async def _execute(self, command):
+            calls.append(command)
+            return SimpleNamespace(stdout=f"{checksum}  /tmp/a.txt\n")
+
+    assert asyncio.run(SSHFileSystem._checksum(DummyFS(), "/tmp/a.txt")) == checksum
+    assert calls == ["md5sum /tmp/a.txt"]
 
 
 def test_ls(fs, remote_dir):
