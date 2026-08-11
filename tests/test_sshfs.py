@@ -253,7 +253,10 @@ def test_checksum_falls_back_to_md5sum_when_uname_session_fails():
             calls.append(command)
             return SimpleNamespace(stdout=f"{checksum}  /tmp/a.txt\n")
 
-    assert asyncio.run(SSHFileSystem._checksum(DummyFS(), "/tmp/a.txt")) == checksum
+    assert (
+        asyncio.run(SSHFileSystem._checksum(DummyFS(), "/tmp/a.txt"))
+        == checksum
+    )
     assert calls == ["md5sum /tmp/a.txt"]
 
 
