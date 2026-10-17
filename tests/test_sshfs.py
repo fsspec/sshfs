@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
+from asyncssh import ProcessError
 from asyncssh.misc import ChannelOpenError
 from asyncssh.sftp import SFTPAttrs, SFTPFailure
 from importlib_metadata import entry_points
@@ -241,23 +242,58 @@ def test_checksum(fs, remote_dir):
     assert fs.checksum(remote_dir + "/a.txt") == checksum
 
 
-def test_checksum_falls_back_to_md5sum_when_uname_session_fails():
+@pytest.mark.parametrize(
+    "exception",
+    [
+        ChannelOpenError(2, "session failed"),
+        ProcessError(None, "uname", None, 127, None, 127, "", "uname failed"),
+    ],
+)
+@pytest.mark.parametrize(
+    "path, command",
+    [
+        ("/tmp/a.txt", "md5sum /tmp/a.txt"),
+        ("/tmp/a file.txt", "md5sum '/tmp/a file.txt'"),
+    ],
+)
+def test_checksum_falls_back_to_md5sum_when_uname_fails(
+    exception, path, command
+):
     checksum = "0123456789abcdef0123456789abcdef"
     calls = []
 
     class DummyFS:
-        async def _get_system(self):
-            raise ChannelOpenError(None, None)
+        _get_system = SSHFileSystem._get_system
 
         async def _execute(self, command):
             calls.append(command)
+            if command == "uname":
+                raise exception
             return SimpleNamespace(stdout=f"{checksum}  /tmp/a.txt\n")
 
-    assert (
-        asyncio.run(SSHFileSystem._checksum(DummyFS(), "/tmp/a.txt"))
-        == checksum
+    assert asyncio.run(SSHFileSystem._checksum(DummyFS(), path)) == checksum
+    assert calls == ["uname", command]
+
+
+def test_checksum_propagates_md5sum_failure():
+    calls = []
+    failure = ProcessError(
+        None, "md5sum", None, 1, None, 1, "", "checksum failed"
     )
-    assert calls == ["md5sum /tmp/a.txt"]
+
+    class DummyFS:
+        _get_system = SSHFileSystem._get_system
+
+        async def _execute(self, command):
+            calls.append(command)
+            if command == "uname":
+                raise ChannelOpenError(2, "session failed")
+            raise failure
+
+    with pytest.raises(ProcessError) as exc:
+        asyncio.run(SSHFileSystem._checksum(DummyFS(), "/tmp/a.txt"))
+    assert exc.value is failure
+    assert calls == ["uname", "md5sum /tmp/a.txt"]
 
 
 def test_ls(fs, remote_dir):
