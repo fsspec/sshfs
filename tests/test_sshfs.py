@@ -93,7 +93,7 @@ def test_fsspec_registration(ssh_server):
         assert isinstance(fs, SSHFileSystem)
 
 
-@pytest.mark.parametrize("remote_dir", ['plain'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain"], indirect=True)
 def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
     for ep in list(entry_points(group="fsspec.specs")):
         url = f"{ep.name}://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
@@ -124,9 +124,7 @@ def test_sftp_client_kwargs(ssh_server, tmp_path, user="user"):
     assert fs.exists(file)
 
 
-def test_sftp_client_kwargs_path_encoding(
-    ssh_server, tmp_path, user="user"
-):
+def test_sftp_client_kwargs_path_encoding(ssh_server, tmp_path, user="user"):
     # path_encoding=None makes asyncssh deliver remote paths as raw
     # bytes instead of str, for servers with non-UTF-8 file names (#39).
     fs = SSHFileSystem(
@@ -147,7 +145,7 @@ def test_sftp_client_kwargs_path_encoding(
     assert fs.cat_file(encoded + b"/data.txt") == b"data"
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_info(fs, remote_dir, plain_remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
@@ -164,7 +162,7 @@ def test_info(fs, remote_dir, plain_remote_dir):
     assert details["name"] == plain_remote_dir + "/dir/"
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_info_timestamps_are_tz_aware_utc(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
@@ -181,7 +179,7 @@ def test_decode_attributes_missing_timestamps(fs):
     assert details["mtime"] is None
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_move(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     initial_info = fs.info(remote_dir + "/a.txt")
@@ -208,7 +206,7 @@ def test_move(fs, remote_dir):
     assert initial_info == secondary_info
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_copy(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     initial_info = fs.info(remote_dir + "/a.txt")
@@ -222,7 +220,7 @@ def test_copy(fs, remote_dir):
     assert strip_keys(initial_info) == strip_keys(secondary_info)
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_rm(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     fs.rm(remote_dir + "/a.txt")
@@ -241,7 +239,7 @@ def test_rm(fs, remote_dir):
     assert not fs.exists(remote_dir + "/dir")
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_checksum(fs, remote_dir):
     data = b"iterative.ai"
 
@@ -252,7 +250,7 @@ def test_checksum(fs, remote_dir):
     assert fs.checksum(remote_dir + "/a.txt") == checksum
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_ls(fs, remote_dir, plain_remote_dir):
     fs.mkdir(remote_dir + "dir/")
     files = set()
@@ -276,7 +274,7 @@ def test_ls(fs, remote_dir, plain_remote_dir):
     assert dirs == expected
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_walk(fs, remote_dir, plain_remote_dir):
     fs.mkdir(remote_dir + "/a")
     fs.mkdir(remote_dir + "/a/b")
@@ -321,7 +319,7 @@ def test_strip_protocol():
     assert strip(b"/foo/\xff") == b"/foo/\xff"
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_mkdir(fs, remote_dir):
     fs.mkdir(remote_dir + "dir/")
     assert fs.isdir(remote_dir + "dir/")
@@ -338,7 +336,7 @@ def test_mkdir(fs, remote_dir):
     assert fs.isdir(remote_dir + "dir/sub")
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_makedirs(fs, remote_dir):
     fs.makedirs(remote_dir + "dir/a/b/c/")
     assert fs.isdir(remote_dir + "dir/a/b/c/")
@@ -351,7 +349,7 @@ def test_makedirs(fs, remote_dir):
     fs.makedirs(remote_dir + "dir/a/b/c/", exist_ok=True)
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_exceptions(fs, remote_dir):
     with pytest.raises(FileNotFoundError):
         with fs.open(remote_dir + "/a.txt"):
@@ -365,7 +363,7 @@ def test_exceptions(fs, remote_dir):
         fs.makedirs(remote_dir + "/dir/a/b/c")
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_open_block_size(fs, remote_dir):
     # mockssh (paramiko) does not implement limits@openssh.com, so the
     # tuned defaults must survive asyncssh's synthesized 16 KiB floors.
@@ -410,7 +408,7 @@ def test_determine_block_size():
     assert determine(writer, SimpleNamespace()) == WRITE_BLOCK_SIZE
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_open_rw(fs, remote_dir):
     data = b"dvc.org"
 
@@ -421,7 +419,7 @@ def test_open_rw(fs, remote_dir):
         assert stream.read() == data
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_open_rw_flush(fs, remote_dir):
     data = b"dvc.org"
 
@@ -435,7 +433,7 @@ def test_open_rw_flush(fs, remote_dir):
         assert stream.read() == data * 400
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_open_rwa(fs, remote_dir):
     data = b"dvc.org"
 
@@ -451,7 +449,7 @@ def test_open_rwa(fs, remote_dir):
         assert stream.read() == data * 400
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_open_r_seek(fs, remote_dir):
     data = b"dvc.org"
 
@@ -464,7 +462,7 @@ def test_open_r_seek(fs, remote_dir):
         assert stream.read() == data * 100
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 @pytest.mark.parametrize("fs", [fs, fs_hard_queue], indirect=True)
 def test_concurrent_operations(fs, remote_dir):
     def create_random_file():
@@ -493,7 +491,7 @@ def test_concurrent_operations(fs, remote_dir):
         assert write_names == read_names
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 @pytest.mark.parametrize("file_path", ["a.txt", "dir/a.txt"])
 def test_put_file(fs, remote_dir, file_path):
     with tempfile.NamedTemporaryFile() as file:
@@ -505,7 +503,7 @@ def test_put_file(fs, remote_dir, file_path):
         assert stream.read() == b"data"
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_concurrency_for_raw_commands(fs, remote_dir):
     with fs.open(remote_dir + "/cp_data", "wb") as stream:
         stream.write(b"hello!")
@@ -523,13 +521,13 @@ def test_concurrency_for_raw_commands(fs, remote_dir):
             future.result()
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_modified(fs, remote_dir):
     modified = fs.modified(remote_dir)
     assert isinstance(modified, datetime)
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_cat_file_sync(fs, remote_dir, plain_remote_dir):
     # Define the content to write to the test file
     test_content = b"Test content for cat_file"
@@ -549,7 +547,7 @@ def test_cat_file_sync(fs, remote_dir, plain_remote_dir):
     ), "The content read from the file does not match the content written."
 
 
-@pytest.mark.parametrize("remote_dir", ['plain', 'sftp', 'ssh'], indirect=True)
+@pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)
 def test_pipe_file(fs, remote_dir):
     test_data = b"Test data for pipe_file" * (2**20)  # 1 MB of test data
     test_file_path = remote_dir + "/test_pipe_file.txt"
