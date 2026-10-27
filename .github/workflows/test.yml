@@ -30,8 +30,6 @@ jobs:
           python-version: ${{ matrix.pyv }}
 
       - name: Test
-        # Leave room for faulthandler_timeout (60s) to dump stacks and for
-        # asyncssh's login_timeout (120s) to raise before the step is killed.
         timeout-minutes: 3
         run: uv run --group test pytest --cov-report=xml --cov=. --reruns 1 --reruns-delay 2
 
