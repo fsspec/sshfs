@@ -26,6 +26,16 @@ dependencies = [
     "asyncssh>=2.11.0,<3",
 ]
 
+[dependency-groups]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-rerunfailures",
+    "mock-ssh-server",
+    "importlib-metadata>=6.0.0",
+]
+
 [project.optional-dependencies]
 bcrypt = ["asyncssh[bcrypt]"]
 fido2 = ["asyncssh[fido2]"]
