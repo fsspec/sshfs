@@ -30,8 +30,7 @@ dependencies = [
 bcrypt = ["asyncssh[bcrypt]"]
 fido2 = ["asyncssh[fido2]"]
 gssapi = ["asyncssh[gssapi]"]
-libnacl = ["asyncssh[libnacl]"]
-pkcs11 = ["asyncssh[python-pkcs11]"]
+pkcs11 = ["asyncssh[pkcs11]"]
 pyopenssl = ["asyncssh[pyOpenSSL]"]
 pywin32 = ["asyncssh[pywin32]"]
 
