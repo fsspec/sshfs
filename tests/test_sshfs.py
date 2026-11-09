@@ -331,7 +331,9 @@ def test_strip_protocol():
 
     assert strip(PathLike("/foo/bar")) == "/foo/bar"
     assert strip(PathLike("ssh://host/foo/bar")) == "/foo/bar"
-    assert strip(PathLike("sftp://user:secret@host:2222/foo/bar")) == "/foo/bar"
+    assert (
+        strip(PathLike("sftp://user:secret@host:2222/foo/bar")) == "/foo/bar"
+    )
 
     # Path-like objects returning bytes must preserve non-UTF-8 paths.
     assert strip(PathLike(b"/foo/\xff")) == b"/foo/\xff"
