@@ -1,4 +1,5 @@
 import hashlib
+import os
 import posixpath
 import secrets
 import tempfile
@@ -317,6 +318,23 @@ def test_strip_protocol():
     # Note: when `path_encoding` is None, protocol-prefixed paths are not supported
     # Raw paths are needed when the SFTP client's path_encoding is None.
     assert strip(b"/foo/\xff") == b"/foo/\xff"
+
+    # pathlib.Path
+    assert strip(Path("/foo/bar")) == "/foo/bar"
+
+    class PathLike(os.PathLike):
+        def __init__(self, path):
+            self.path = path
+
+        def __fspath__(self):
+            return self.path
+
+    assert strip(PathLike("/foo/bar")) == "/foo/bar"
+    assert strip(PathLike("ssh://host/foo/bar")) == "/foo/bar"
+    assert strip(PathLike("sftp://user:secret@host:2222/foo/bar")) == "/foo/bar"
+
+    # Path-like objects returning bytes must preserve non-UTF-8 paths.
+    assert strip(PathLike(b"/foo/\xff")) == b"/foo/\xff"
 
 
 @pytest.mark.parametrize("remote_dir", ["plain", "sftp", "ssh"], indirect=True)

@@ -99,12 +99,12 @@ class SSHFileSystem(AsyncFileSystem):
 
     @classmethod
     def _strip_protocol(cls, path):
+        # convert `pathlib.Path` and `os.PathLike` etc.
+        path = stringify_path(path)
         # Note: when `path_encoding` is None, protocol-prefixed paths are not supported
         # Raw SFTP paths must retain their encoding (path_encoding=None).
         if isinstance(path, bytes):
             return path
-        # convert `pathlib.Path` and `os.PathLike` etc.
-        path = stringify_path(path)
         # Remove components such as host and username from path.
         inferred_path = infer_storage_options(path)["path"]
         stripped = super()._strip_protocol(inferred_path)
