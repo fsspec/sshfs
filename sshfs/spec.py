@@ -7,6 +7,8 @@ from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime
 
 import asyncssh
+from asyncssh import ProcessError
+from asyncssh.misc import ChannelOpenError
 from asyncssh.sftp import SFTPOpUnsupported
 from fsspec.asyn import (
     AsyncFileSystem,
@@ -342,18 +344,19 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _checksum(self, path):
-        system = await self._get_system()
+        try:
+            system = await self._get_system()
+        except (ChannelOpenError, ProcessError):
+            system = "Linux"
+
         if system == "Linux":
-            command = "md5sum"
+            result = await self._execute(f"md5sum {shlex.quote(path)}")
             part = 0
         elif system == "Darwin":
-            command = "md5"
+            result = await self._execute(f"md5 {shlex.quote(path)}")
             part = -1
         else:
             raise ValueError(f"{system!r} doesn't support checksum operation")
-
-        cmd = f"{command} {shlex.quote(path)}"
-        result = await self._execute(cmd)
 
         parts = result.stdout.strip().split()
         assert len(parts) >= 1
