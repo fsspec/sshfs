@@ -505,6 +505,19 @@ def test_put_file(fs, remote_dir, file_path):
         assert stream.read() == b"data"
 
 
+@pytest.mark.parametrize("file_path", ["a.txt", "dir/a.txt"])
+def test_get_file(fs, remote_dir, file_path):
+    remote_file = remote_dir + f"/{file_path}"
+    fs.makedirs(posixpath.dirname(remote_file), exist_ok=True)
+
+    with fs.open(remote_file, "wb") as stream:
+        stream.write(b"data")
+
+    with tempfile.NamedTemporaryFile() as file:
+        fs.get_file(remote_file, file.name)
+        assert file.file.read() == b"data"
+
+
 def test_concurrency_for_raw_commands(fs, remote_dir):
     with fs.open(remote_dir + "/cp_data", "wb") as stream:
         stream.write(b"hello!")
