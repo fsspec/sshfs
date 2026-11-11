@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import AsyncExitStack, suppress
-from typing import Optional
 
 from asyncssh.misc import ChannelOpenError
 
@@ -16,10 +15,10 @@ class BaseSFTPChannelPool:
         self,
         client,
         *,
-        max_channels: Optional[int] = None,
-        timeout: Optional[float] = MAX_TIMEOUT,
+        max_channels: int | None = None,
+        timeout: float | None = MAX_TIMEOUT,
         unsafe_terminate: bool = True,
-        sftp_client_kwargs: Optional[dict] = None,
+        sftp_client_kwargs: dict | None = None,
         **kwargs,
     ):
         self.client = client
