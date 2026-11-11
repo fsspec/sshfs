@@ -110,6 +110,19 @@ def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
             }
 
 
+@pytest.mark.parametrize("protocol", ["ssh", "sftp"])
+def test_url_host_is_ignored(fs, plain_remote_dir, protocol):
+    path = plain_remote_dir + "/a.txt"
+    with fs.open(path, "wb") as stream:
+        stream.write(b"data")
+
+    url = f"{protocol}://other-host:12345{path}"
+    assert fs.cat_file(url) == b"data"
+
+    fs.rm(url)
+    assert not fs.exists(path)
+
+
 def test_sftp_client_kwargs(ssh_server, tmp_path, user="user"):
     fs = SSHFileSystem(
         host=ssh_server.host,
