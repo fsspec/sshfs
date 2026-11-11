@@ -5,14 +5,14 @@ import secrets
 import tempfile
 import warnings
 from concurrent import futures
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from importlib.metadata import entry_points
 from pathlib import Path
 from types import SimpleNamespace
 
 import fsspec
 import pytest
 from asyncssh.sftp import SFTPAttrs, SFTPClient, SFTPFailure, SFTPOpUnsupported
-from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
 from sshfs.file import SSHFile
@@ -178,7 +178,7 @@ def test_info_timestamps_are_tz_aware_utc(fs, remote_dir):
     fs.touch(remote_dir + "/a.txt")
     details = fs.info(remote_dir + "/a.txt")
     for key in ["time", "mtime"]:
-        assert details[key].tzinfo == timezone.utc
+        assert details[key].tzinfo == UTC
 
 
 def test_decode_attributes_missing_timestamps(fs):

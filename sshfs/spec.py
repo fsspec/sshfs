@@ -4,8 +4,7 @@ import shlex
 import stat
 import weakref
 from contextlib import AsyncExitStack, suppress
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import asyncssh
 from asyncssh.sftp import SFTPOpUnsupported
@@ -41,7 +40,7 @@ class SSHFileSystem(AsyncFileSystem):
         host,
         *,
         pool_type=SFTPSoftChannelPool,
-        sftp_client_kwargs: Optional[dict] = None,
+        sftp_client_kwargs: dict | None = None,
         **kwargs,
     ):
         """
@@ -59,7 +58,7 @@ class SSHFileSystem(AsyncFileSystem):
             Pool manager to use (when doing concurrent operations together,
             pool managers offer the flexibility of prioritizing channels
             and deciding which to use).
-        sftp_client_kwargs: Optional[dict]
+        sftp_client_kwargs: dict | None
             Options passed to `SSHClientConnection.start_sftp_client`
             (e.g. env, send_env, path_encoding, path_errors,
             sftp_version).
@@ -196,12 +195,12 @@ class SSHFileSystem(AsyncFileSystem):
             "gid": attributes.gid,
             "uid": attributes.uid,
             "time": (
-                datetime.fromtimestamp(attributes.atime, tz=timezone.utc)
+                datetime.fromtimestamp(attributes.atime, tz=UTC)
                 if attributes.atime is not None
                 else None
             ),
             "mtime": (
-                datetime.fromtimestamp(attributes.mtime, tz=timezone.utc)
+                datetime.fromtimestamp(attributes.mtime, tz=UTC)
                 if attributes.mtime is not None
                 else None
             ),
