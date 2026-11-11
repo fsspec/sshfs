@@ -146,7 +146,6 @@ def test_sftp_client_kwargs_path_encoding(ssh_server, tmp_path, user="user"):
         port=ssh_server.port,
         username=user,
         client_keys=[USERS[user]],
-        # Note: when `path_encoding` is None, protocol-prefixed paths are not supported
         sftp_client_kwargs={"path_encoding": None},
     )
 
@@ -338,8 +337,6 @@ def test_strip_protocol():
     assert strip("/foo/bar") == "/foo/bar"
     assert strip("ssh://host/foo/bar") == "/foo/bar"
     assert strip("sftp://user:secret@host:2222/foo/bar") == "/foo/bar"
-    # Note: when `path_encoding` is None, protocol-prefixed paths are not supported
-    # Raw paths are needed when the SFTP client's path_encoding is None.
     assert strip(b"/foo/\xff") == b"/foo/\xff"
 
     # pathlib.Path

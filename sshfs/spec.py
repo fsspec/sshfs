@@ -64,9 +64,16 @@ class SSHFileSystem(AsyncFileSystem):
             (e.g. env, send_env, path_encoding, path_errors,
             sftp_version).
 
-        Note
-        ----
-        when ``sftp_client_kwargs`` [ ``path_encoding`` ] = ``None`` , protocol-prefixed paths are not supported (e.g. ``b"ssh://host/path/to/file"``)
+        Notes
+        -----
+        Methods called on an existing filesystem instance use its current
+        SSH connection. The host, username, and port in string URLs are
+        ignored; operations use only the path on the connected server.
+
+        Bytes paths (and path-likes whose ``__fspath__`` returns bytes) are sent
+        to the server unchanged: protocol prefixes are not stripped and trailing
+        slashes are kept. With ``sftp_client_kwargs={"path_encoding": None}``,
+        paths must be bytes.
         """
 
         super().__init__(self, **kwargs)
@@ -101,8 +108,6 @@ class SSHFileSystem(AsyncFileSystem):
     def _strip_protocol(cls, path):
         # convert `pathlib.Path` and `os.PathLike` etc.
         path = stringify_path(path)
-        # Note: when `path_encoding` is None, protocol-prefixed paths are not supported
-        # Raw SFTP paths must retain their encoding (path_encoding=None).
         if isinstance(path, bytes):
             return path
         # Remove components such as host and username from path.
