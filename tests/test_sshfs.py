@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure
+from asyncssh.sftp import SFTPAttrs, SFTPClient, SFTPFailure, SFTPOpUnsupported
 from importlib_metadata import entry_points
 
 from sshfs import SSHFileSystem
@@ -202,6 +202,24 @@ def test_move(fs, remote_dir):
         seconds=1
     ), "atime differs more than expected"
     assert initial_info == secondary_info
+
+
+def test_move_fallback_posix_rename_unsupported(fs, remote_dir, monkeypatch):
+    source = remote_dir + "/a.txt"
+    destination = remote_dir + "/b.txt"
+    with fs.open(source, "wb") as stream:
+        stream.write(b"data")
+
+    async def _posix_rename(*args, **kwargs):
+        raise SFTPOpUnsupported("posix_rename is unsupported")
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", _posix_rename)
+
+    fs.move(source, destination)
+
+    assert not fs.exists(source)
+    with fs.open(destination, "rb") as stream:
+        assert stream.read() == b"data"
 
 
 def test_copy(fs, remote_dir):
