@@ -15,7 +15,7 @@ from fsspec.asyn import (
     sync,
     sync_wrapper,
 )
-from fsspec.utils import infer_storage_options
+from fsspec.utils import infer_storage_options, stringify_path
 
 from sshfs.file import SSHFile
 from sshfs.pools import SFTPSoftChannelPool
@@ -62,6 +62,17 @@ class SSHFileSystem(AsyncFileSystem):
             Options passed to `SSHClientConnection.start_sftp_client`
             (e.g. env, send_env, path_encoding, path_errors,
             sftp_version).
+
+        Notes
+        -----
+        Methods called on an existing filesystem instance use its current
+        SSH connection. The host, username, and port in string URLs are
+        ignored; operations use only the path on the connected server.
+
+        Bytes paths (and path-likes whose ``__fspath__`` returns bytes) are sent
+        to the server unchanged: protocol prefixes are not stripped and trailing
+        slashes are kept. With ``sftp_client_kwargs={"path_encoding": None}``,
+        paths must be bytes.
         """
 
         super().__init__(self, **kwargs)
@@ -94,6 +105,10 @@ class SSHFileSystem(AsyncFileSystem):
 
     @classmethod
     def _strip_protocol(cls, path):
+        # convert `pathlib.Path` and `os.PathLike` etc.
+        path = stringify_path(path)
+        if isinstance(path, bytes):
+            return path
         # Remove components such as host and username from path.
         inferred_path = infer_storage_options(path)["path"]
         stripped = super()._strip_protocol(inferred_path)
@@ -214,6 +229,8 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _mv(self, lpath, rpath, **kwargs):
+        lpath = self._strip_protocol(lpath)
+        rpath = self._strip_protocol(rpath)
         async with self._pool.get() as channel:
             with suppress(SFTPOpUnsupported):
                 return await channel.posix_rename(lpath, rpath)
@@ -237,6 +254,7 @@ class SSHFileSystem(AsyncFileSystem):
         callback=None,
         **kwargs,
     ):
+        rpath = self._strip_protocol(rpath)
         await self._makedirs(self._parent(rpath), exist_ok=True)
         async with self._pool.get() as channel:
             await channel.put(
@@ -250,6 +268,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _get_file(
         self, lpath, rpath, block_size=READ_BLOCK_SIZE, callback=None, **kwargs
     ):
+        lpath = self._strip_protocol(lpath)
         async with self._pool.get() as channel:
             await channel.get(
                 lpath,
@@ -260,11 +279,14 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _cp_file(self, lpath, rpath, **kwargs):
+        lpath = self._strip_protocol(lpath)
+        rpath = self._strip_protocol(rpath)
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
     @wrap_exceptions
     async def _ls(self, path, detail=True, **kwargs):
+        path = self._strip_protocol(path)
         async with self._pool.get() as channel:
             file_attrs = await channel.readdir(path)
 
@@ -286,6 +308,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _mkdir(
         self, path, *, create_parents=True, permissions=511, **kwargs
     ):
+        path = self._strip_protocol(path)
         if create_parents:
             return await self._makedirs(path, exist_ok=True)
 
@@ -297,6 +320,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _makedirs(
         self, path, *, exist_ok=False, permissions=511, **kwargs
     ):
+        path = self._strip_protocol(path)
         attrs = asyncssh.SFTPAttrs(permissions=permissions)
         async with self._pool.get() as channel:
             await channel.makedirs(path, exist_ok=exist_ok, attrs=attrs)
@@ -306,6 +330,7 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _rm_file(self, path, **kwargs):
+        path = self._strip_protocol(path)
         async with self._pool.get() as channel:
             await channel.unlink(path)
 
@@ -318,6 +343,7 @@ class SSHFileSystem(AsyncFileSystem):
         on_error=None,
         **kwargs,
     ):
+        path = self._strip_protocol(path)
         async with self._pool.get() as channel:
             if recursive:
                 await channel.rmtree(
@@ -342,6 +368,7 @@ class SSHFileSystem(AsyncFileSystem):
 
     @wrap_exceptions
     async def _checksum(self, path):
+        path = self._strip_protocol(path)
         system = await self._get_system()
         if system == "Linux":
             command = "md5sum"
@@ -380,11 +407,13 @@ class SSHFileSystem(AsyncFileSystem):
     execute = sync_wrapper(_execute)
 
     def _open(self, path, *args, **kwargs):
+        path = self._strip_protocol(path)
         return SSHFile(self, path, *args, **kwargs)
 
     @wrap_exceptions
     async def _cat_file(self, path, **kwargs):
         """Asynchronously fetch the contents of a file"""
+        path = self._strip_protocol(path)
         async with self._pool.get() as channel:
             async with channel.open(path, "rb") as f:
                 return await f.read()
@@ -392,6 +421,7 @@ class SSHFileSystem(AsyncFileSystem):
     @wrap_exceptions
     async def _pipe_file(self, path, data, chunksize=50 * 2**20, **kwargs):
         """Asynchronously writes the given data to a remote file in chunks."""
+        path = self._strip_protocol(path)
         await self._makedirs(self._parent(path), exist_ok=True)
 
         async with self._pool.get() as channel:
