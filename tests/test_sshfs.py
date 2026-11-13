@@ -2,7 +2,6 @@ import hashlib
 import os
 import posixpath
 import secrets
-import tempfile
 import warnings
 from concurrent import futures
 from datetime import UTC, datetime, timedelta
@@ -522,27 +521,26 @@ def test_concurrent_operations(fs, remote_dir):
 
 
 @pytest.mark.parametrize("file_path", ["a.txt", "dir/a.txt"])
-def test_put_file(fs, remote_dir, file_path):
-    with tempfile.NamedTemporaryFile() as file:
-        file.file.write(b"data")
-        file.file.flush()
-        fs.put_file(file.name, remote_dir + f"/{file_path}")
+def test_put_file(fs, remote_dir, file_path, tmp_path):
+    local_file = tmp_path / "upload.txt"
+    local_file.write_bytes(b"data")
+    fs.put_file(str(local_file), remote_dir + f"/{file_path}")
 
     with fs.open(remote_dir + f"/{file_path}") as stream:
         assert stream.read() == b"data"
 
 
 @pytest.mark.parametrize("file_path", ["a.txt", "dir/a.txt"])
-def test_get_file(fs, remote_dir, file_path):
+def test_get_file(fs, remote_dir, file_path, tmp_path):
     remote_file = remote_dir + f"/{file_path}"
     fs.makedirs(posixpath.dirname(remote_file), exist_ok=True)
 
     with fs.open(remote_file, "wb") as stream:
         stream.write(b"data")
 
-    with tempfile.NamedTemporaryFile() as file:
-        fs.get_file(remote_file, file.name)
-        assert file.file.read() == b"data"
+    local_file = tmp_path / "downloaded.txt"
+    fs.get_file(remote_file, str(local_file))
+    assert local_file.read_bytes() == b"data"
 
 
 def test_concurrency_for_raw_commands(fs, remote_dir):
