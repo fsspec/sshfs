@@ -37,10 +37,10 @@ def ssh_server():
 
 
 @pytest.fixture
-def plain_remote_dir(fs, tmp_path):
-    directory = str(tmp_path / "remote")
-    fs.mkdir(directory)
-    return directory
+def plain_remote_dir(tmp_path):
+    directory = tmp_path / "remote"
+    directory.mkdir()
+    return str(directory)
 
 
 @pytest.fixture(params=["plain", "ssh", "sftp"])
@@ -94,10 +94,9 @@ def test_fsspec_registration(ssh_server):
         assert isinstance(fs, SSHFileSystem)
 
 
-@pytest.mark.parametrize("remote_dir", ["plain"], indirect=True)
-def test_fsspec_url_parsing(ssh_server, remote_dir, user="user"):
+def test_fsspec_url_parsing(ssh_server, plain_remote_dir, user="user"):
     for ep in list(entry_points(group="fsspec.specs")):
-        url = f"{ep.name}://{user}@{ssh_server.host}:{ssh_server.port}/{remote_dir}/file"
+        url = f"{ep.name}://{user}@{ssh_server.host}:{ssh_server.port}/{plain_remote_dir}/file"
         with fsspec.open(url, "w", client_keys=[USERS[user]]) as file:
             # Check the underlying file system.
             file_fs = file.buffer.fs
