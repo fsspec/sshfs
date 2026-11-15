@@ -105,7 +105,8 @@ class SSHFileSystem(AsyncFileSystem):
 
     @classmethod
     def _strip_protocol(cls, path):
-        # convert `pathlib.Path` and `os.PathLike` etc.
+        if isinstance(path, list):
+            return [cls._strip_protocol(p) for p in path]
         path = stringify_path(path)
         if isinstance(path, bytes):
             return path
@@ -353,7 +354,8 @@ class SSHFileSystem(AsyncFileSystem):
                 await channel.rmdir(path)
 
     async def _rm(self, path, recursive=False, **kwargs):
-        if isinstance(path, str):
+        path = self._strip_protocol(path)
+        if isinstance(path, (str, bytes)):
             path = [path]
 
         coros = []

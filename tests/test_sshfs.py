@@ -356,6 +356,9 @@ def test_strip_protocol():
     # Path-like objects returning bytes must preserve non-UTF-8 paths.
     assert strip(PathLike(b"/foo/\xff")) == b"/foo/\xff"
 
+    # list
+    assert strip(["foo/bar/1", "foo/bar/2"]) == ["foo/bar/1", "foo/bar/2"]
+
 
 def test_mkdir(fs, remote_dir):
     fs.mkdir(remote_dir + "dir/")
