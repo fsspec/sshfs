@@ -241,10 +241,8 @@ class SSHFileSystem(AsyncFileSystem):
         # In that case we are going to copy the file and delete
         # it.
 
-        try:
-            await self._cp_file(lpath, rpath)
-        finally:
-            await self._rm_file(lpath)
+        await self._cp_file(lpath, rpath)
+        await self._rm_file(lpath)
 
     @wrap_exceptions
     async def _put_file(
