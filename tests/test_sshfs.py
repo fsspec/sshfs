@@ -4,14 +4,14 @@ import secrets
 import tempfile
 import warnings
 from concurrent import futures
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from importlib.metadata import entry_points
 from pathlib import Path
 from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure
+from asyncssh.sftp import SFTPAttrs, SFTPClient, SFTPFailure, SFTPOpUnsupported
 
 from sshfs import SSHFileSystem
 from sshfs.file import SSHFile
@@ -172,30 +172,57 @@ def test_decode_attributes_missing_timestamps(fs):
     assert details["mtime"] is None
 
 
-def test_move(fs, remote_dir):
+@pytest.fixture
+def no_posix_rename(monkeypatch):
+    # Force the copy + delete fallback in SSHFileSystem._mv.
+    async def posix_rename(*args, **kwargs):
+        raise SFTPOpUnsupported("posix_rename is unsupported")
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename)
+
+
+def test_move_posix_rename(fs, remote_dir, monkeypatch):
+    # The mock server doesn't advertise posix-rename, so without this
+    # patch mv would always take the copy fallback.
+    async def posix_rename(self, oldpath, newpath):
+        await self.rename(oldpath, newpath)
+
+    async def cp_file(*args, **kwargs):
+        pytest.fail("mv must not fall back to copying")
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename)
+    monkeypatch.setattr(fs, "_cp_file", cp_file)
+
     fs.touch(remote_dir + "/a.txt")
     initial_info = fs.info(remote_dir + "/a.txt")
 
-    fs.move(remote_dir + "/a.txt", remote_dir + "/b.txt")
-    secondary_info = fs.info(remote_dir + "/b.txt")
+    fs.mv(remote_dir + "/a.txt", remote_dir + "/b.txt")
 
     assert not fs.exists(remote_dir + "/a.txt")
-    assert fs.exists(remote_dir + "/b.txt")
-
+    secondary_info = fs.info(remote_dir + "/b.txt")
     initial_info.pop("name")
     secondary_info.pop("name")
-
-    initial_mtime = initial_info.pop("mtime")
-    initial_atime = initial_info.pop("time")
-    secondary_mtime = secondary_info.pop("mtime")
-    secondary_atime = secondary_info.pop("time")
-    assert abs(secondary_mtime - initial_mtime) <= timedelta(
-        seconds=1
-    ), "mtime differs more than expected"
-    assert abs(secondary_atime - initial_atime) <= timedelta(
-        seconds=1
-    ), "atime differs more than expected"
     assert initial_info == secondary_info
+
+
+def test_move_copy_fallback(fs, remote_dir, no_posix_rename):
+    fs.pipe_file(remote_dir + "/a.txt", b"data")
+
+    fs.mv(remote_dir + "/a.txt", remote_dir + "/b.txt")
+
+    assert not fs.exists(remote_dir + "/a.txt")
+    assert fs.cat_file(remote_dir + "/b.txt") == b"data"
+
+
+def test_move_copy_fallback_failure_keeps_source(
+    fs, remote_dir, no_posix_rename
+):
+    fs.pipe_file(remote_dir + "/a.txt", b"data")
+
+    with pytest.raises(FileNotFoundError):
+        fs.mv(remote_dir + "/a.txt", remote_dir + "/missing/b.txt")
+
+    assert fs.cat_file(remote_dir + "/a.txt") == b"data"
 
 
 def test_copy(fs, remote_dir):
