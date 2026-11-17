@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPFailure
+from asyncssh.sftp import SFTPAttrs, SFTPClient, SFTPFailure, SFTPOpUnsupported
 
 from sshfs import SSHFileSystem
 from sshfs.file import SSHFile
@@ -172,9 +172,23 @@ def test_decode_attributes_missing_timestamps(fs):
     assert details["mtime"] is None
 
 
-def test_move(fs, remote_dir):
+def test_move(fs, remote_dir, monkeypatch):
     fs.touch(remote_dir + "/a.txt")
     initial_info = fs.info(remote_dir + "/a.txt")
+
+    async def posix_rename(self, lpath, rpath):
+        await self.rename(lpath, rpath)
+
+    cp_file = fs._cp_file
+    cp_file_called = False
+
+    async def track_cp_file(*args, **kwargs):
+        nonlocal cp_file_called
+        cp_file_called = True
+        return await cp_file(*args, **kwargs)
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename)
+    monkeypatch.setattr(fs, "_cp_file", track_cp_file)
 
     fs.move(remote_dir + "/a.txt", remote_dir + "/b.txt")
     secondary_info = fs.info(remote_dir + "/b.txt")
@@ -196,6 +210,79 @@ def test_move(fs, remote_dir):
         seconds=1
     ), "atime differs more than expected"
     assert initial_info == secondary_info
+    assert not cp_file_called
+
+
+def test_move_fallback_copy_failure_preserves_source(
+    fs, remote_dir, monkeypatch
+):
+    source = remote_dir + "/a.txt"
+    destination = remote_dir + "/missing/b.txt"
+    data = b"source data"
+    fs.pipe_file(source, data)
+
+    async def posix_rename_unsupported(*args, **kwargs):
+        raise SFTPOpUnsupported("posix rename is unsupported")
+
+    rm_file = fs._rm_file
+    rm_file_called = False
+
+    async def track_rm_file(*args, **kwargs):
+        nonlocal rm_file_called
+        rm_file_called = True
+        return await rm_file(*args, **kwargs)
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename_unsupported)
+    monkeypatch.setattr(fs, "_rm_file", track_rm_file)
+
+    with pytest.raises(FileNotFoundError):
+        fs.mv(source, destination)
+
+    assert fs.exists(source)
+    assert fs.cat_file(source) == data
+    assert not fs.exists(destination)
+    assert not rm_file_called
+
+
+def test_move_fallback_copies_then_removes_source(fs, remote_dir, monkeypatch):
+    source = remote_dir + "/a.txt"
+    destination = remote_dir + "/b.txt"
+    data = b"source data"
+    fs.pipe_file(source, data)
+
+    async def posix_rename_unsupported(*args, **kwargs):
+        raise SFTPOpUnsupported("posix rename is unsupported")
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename_unsupported)
+
+    fs.mv(source, destination)
+
+    assert not fs.exists(source)
+    assert fs.cat_file(destination) == data
+
+
+def test_move_fallback_propagates_copy_error(fs, remote_dir, monkeypatch):
+    source = remote_dir + "/a.txt"
+    destination = remote_dir + "/b.txt"
+    copy_error = RuntimeError("copy failed")
+
+    async def posix_rename_unsupported(*args, **kwargs):
+        raise SFTPOpUnsupported("posix rename is unsupported")
+
+    async def copy_file_failed(*args, **kwargs):
+        raise copy_error
+
+    async def rm_file_not_called(*args, **kwargs):
+        pytest.fail("source removal must not run after a failed copy")
+
+    monkeypatch.setattr(SFTPClient, "posix_rename", posix_rename_unsupported)
+    monkeypatch.setattr(fs, "_cp_file", copy_file_failed)
+    monkeypatch.setattr(fs, "_rm_file", rm_file_not_called)
+
+    with pytest.raises(RuntimeError) as raised:
+        fs.mv(source, destination)
+
+    assert raised.value is copy_error
 
 
 def test_copy(fs, remote_dir):
