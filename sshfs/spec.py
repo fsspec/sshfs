@@ -351,6 +351,8 @@ class SSHFileSystem(AsyncFileSystem):
             else:
                 await channel.rmdir(path)
 
+    rmdir = sync_wrapper(_rmdir)
+
     async def _rm(self, path, recursive=False, **kwargs):
         path = self._strip_protocol(path)
         if isinstance(path, (str, bytes)):
