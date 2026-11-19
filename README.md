@@ -58,6 +58,14 @@ fs = SSHFileSystem(
 
 Note: you can also pass `client_keys` as an argument to `fsspec.open`.
 
+To pass remote filenames as bytes, set
+`sftp_client_kwargs={"path_encoding": None}` when creating the filesystem.
+Use bytes for remote paths with this setting. Metadata, listing, removal,
+uploads, copies, and checksums preserve these paths through SFTP. Checksums
+of byte paths stream the file over SFTP, so they require transferring its data.
+Inherited fsspec traversal and bulk methods such as `walk`, `find`, `glob`,
+`get`, `put`, and `copy` still require string paths.
+
 All operations and their descriptions are specified [here](https://filesystem-spec.readthedocs.io/en/latest/api.html#fsspec.spec.AbstractFileSystem).
 Here are a few example calls you can make, starting with `info()` which allows you to retrieve the metadata about given path;
 

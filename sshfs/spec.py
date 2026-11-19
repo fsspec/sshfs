@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import posixpath
 import shlex
 import stat
@@ -128,6 +129,15 @@ class SSHFileSystem(AsyncFileSystem):
         out.pop("protocol", None)
         return out
 
+    @classmethod
+    def _parent(cls, path):
+        path = cls._strip_protocol(path)
+        if isinstance(path, bytes):
+            return posixpath.dirname(path.rstrip(b"/")) or (
+                b"/" if path.startswith(b"/") else b""
+            )
+        return super()._parent(path)
+
     @wrap_exceptions
     async def _connect(
         self,
@@ -215,9 +225,10 @@ class SSHFileSystem(AsyncFileSystem):
             attributes = await channel.stat(path)
 
         info = self._decode_attributes(attributes)
-        path = path.rstrip("/")
+        separator = b"/" if isinstance(path, bytes) else "/"
+        path = path.rstrip(separator)
         if info["type"] == "directory":
-            path += "/"
+            path += separator
         info["name"] = path
         return info
 
@@ -254,7 +265,9 @@ class SSHFileSystem(AsyncFileSystem):
         **kwargs,
     ):
         rpath = self._strip_protocol(rpath)
-        await self._makedirs(self._parent(rpath), exist_ok=True)
+        parent = self._parent(rpath)
+        if parent:
+            await self._makedirs(parent, exist_ok=True)
         async with self._pool.get() as channel:
             await channel.put(
                 lpath,
@@ -280,6 +293,10 @@ class SSHFileSystem(AsyncFileSystem):
     async def _cp_file(self, lpath, rpath, **kwargs):
         lpath = self._strip_protocol(lpath)
         rpath = self._strip_protocol(rpath)
+        if isinstance(lpath, bytes) or isinstance(rpath, bytes):
+            async with self._pool.get() as channel:
+                await channel.copy(lpath, rpath, follow_symlinks=True)
+            return
         cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
         await self._execute(cmd)
 
@@ -291,7 +308,7 @@ class SSHFileSystem(AsyncFileSystem):
 
         infos = []
         for file_attr in file_attrs:
-            if file_attr.filename in ["", ".", ".."]:
+            if file_attr.filename in ("", ".", "..", b"", b".", b".."):
                 continue
             info = self._decode_attributes(file_attr.attrs)
             info["name"] = posixpath.join(path, file_attr.filename)
@@ -369,6 +386,13 @@ class SSHFileSystem(AsyncFileSystem):
     @wrap_exceptions
     async def _checksum(self, path):
         path = self._strip_protocol(path)
+        if isinstance(path, bytes):
+            digest = hashlib.md5(usedforsecurity=False)
+            async with self._pool.get() as channel:
+                async with channel.open(path, "rb") as file:
+                    while chunk := await file.read(READ_BLOCK_SIZE):
+                        digest.update(chunk)
+            return digest.hexdigest()
         system = await self._get_system()
         if system == "Linux":
             command = "md5sum"
@@ -422,7 +446,9 @@ class SSHFileSystem(AsyncFileSystem):
     async def _pipe_file(self, path, data, chunksize=50 * 2**20, **kwargs):
         """Asynchronously writes the given data to a remote file in chunks."""
         path = self._strip_protocol(path)
-        await self._makedirs(self._parent(path), exist_ok=True)
+        parent = self._parent(path)
+        if parent:
+            await self._makedirs(parent, exist_ok=True)
 
         async with self._pool.get() as channel:
             async with channel.open(path, "wb") as f:
