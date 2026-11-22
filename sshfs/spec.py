@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime
 
 import asyncssh
-from asyncssh.sftp import SFTPOpUnsupported
+from asyncssh.sftp import SFTPFailure, SFTPFileAlreadyExists, SFTPOpUnsupported
 from fsspec.asyn import (
     AsyncFileSystem,
     FSTimeoutError,
@@ -236,11 +236,14 @@ class SSHFileSystem(AsyncFileSystem):
             with suppress(SFTPOpUnsupported):
                 return await channel.posix_rename(lpath, rpath)
 
-        # Some systems doesn't natively support posix_rename
-        # which is an extension to the original SFTP protocol.
-        # In that case we are going to copy the file and delete
-        # it.
+            # posix_rename is an extension to the SFTP protocol, but plain
+            # rename is in the base protocol. Servers refuse it when rpath
+            # already exists, so only that case reaches the copy below.
+            with suppress(SFTPFailure, SFTPFileAlreadyExists):
+                return await channel.rename(lpath, rpath)
 
+        # Copy the file and delete the original. This runs `cp` over SSH,
+        # which servers that only allow SFTP reject.
         await self._cp_file(lpath, rpath)
         await self._rm_file(lpath)
 

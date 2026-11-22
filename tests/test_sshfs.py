@@ -221,7 +221,31 @@ def test_move_posix_rename(fs, remote_dir, monkeypatch):
     assert initial_info == secondary_info
 
 
-def test_move_copy_fallback(fs, remote_dir, no_posix_rename):
+def test_move_sftp_rename_fallback(
+    fs, remote_dir, no_posix_rename, monkeypatch
+):
+    async def cp_file(*args, **kwargs):
+        pytest.fail("mv must use SFTP rename before copying over SSH")
+
+    monkeypatch.setattr(fs, "_cp_file", cp_file)
+    fs.pipe_file(remote_dir + "/a.txt", b"data")
+
+    fs.mv(remote_dir + "/a.txt", remote_dir + "/b.txt")
+
+    assert not fs.exists(remote_dir + "/a.txt")
+    assert fs.cat_file(remote_dir + "/b.txt") == b"data"
+
+
+@pytest.fixture
+def no_sftp_rename(monkeypatch, no_posix_rename):
+    # Plain SFTP rename refuses an existing target on most servers.
+    async def rename(*args, **kwargs):
+        raise SFTPFailure("target exists")
+
+    monkeypatch.setattr(SFTPClient, "rename", rename)
+
+
+def test_move_copy_fallback(fs, remote_dir, no_sftp_rename):
     fs.pipe_file(remote_dir + "/a.txt", b"data")
 
     fs.mv(remote_dir + "/a.txt", remote_dir + "/b.txt")
@@ -231,7 +255,7 @@ def test_move_copy_fallback(fs, remote_dir, no_posix_rename):
 
 
 def test_move_copy_fallback_failure_keeps_source(
-    fs, remote_dir, no_posix_rename
+    fs, remote_dir, no_sftp_rename
 ):
     fs.pipe_file(remote_dir + "/a.txt", b"data")
 
