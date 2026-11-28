@@ -11,7 +11,13 @@ from types import SimpleNamespace
 
 import fsspec
 import pytest
-from asyncssh.sftp import SFTPAttrs, SFTPClient, SFTPFailure, SFTPOpUnsupported
+from asyncssh.sftp import (
+    SFTPAttrs,
+    SFTPClient,
+    SFTPFailure,
+    SFTPName,
+    SFTPOpUnsupported,
+)
 
 from sshfs import SSHFileSystem
 from sshfs.file import SSHFile
@@ -73,6 +79,17 @@ def fs_hard_queue(ssh_server, user="user"):
         username=user,
         client_keys=[USERS[user]],
         pool_type=SFTPHardChannelPool,
+    )
+
+
+@pytest.fixture
+def fs_bytes(ssh_server):
+    return SSHFileSystem(
+        host=ssh_server.host,
+        port=ssh_server.port,
+        username="user",
+        client_keys=[USERS["user"]],
+        sftp_client_kwargs={"path_encoding": None},
     )
 
 
@@ -154,6 +171,121 @@ def test_sftp_client_kwargs_path_encoding(ssh_server, tmp_path, user="user"):
     encoded = str(directory).encode()
     assert fs.ls(encoded, detail=False) == [encoded + b"/data.txt"]
     assert fs.cat_file(encoded + b"/data.txt") == b"data"
+
+
+def test_bytes_metadata_and_remove(fs_bytes, tmp_path):
+    directory = tmp_path / "byte-paths"
+    directory.mkdir()
+    file = directory / "data.txt"
+    file.write_bytes(b"data")
+    path = os.fsencode(file)
+    parent = os.fsencode(directory)
+    assert fs_bytes.info(path)["name"] == path
+    assert fs_bytes.info(parent + b"/")["name"] == parent + b"/"
+    assert fs_bytes.exists(path) and fs_bytes.isfile(path)
+    assert fs_bytes.isdir(parent) and fs_bytes.size(path) == 4
+    assert fs_bytes.modified(path).tzinfo == UTC
+    fs_bytes.rm(path)
+    assert not file.exists()
+    fs_bytes.rm(parent, recursive=True)
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize(
+    "path, parent",
+    [
+        ("ssh://host/a/b", "/a"),
+        ("/a", "/"),
+        ("/", "/"),
+        ("a/b", "a"),
+        ("a", ""),
+        (b"/a/b/", b"/a"),
+        (b"/a", b"/"),
+        (b"/", b"/"),
+        (b"a/b", b"a"),
+        (b"a", b""),
+    ],
+)
+def test_parent(path, parent):
+    # "" is the home directory, so the parent of a top-level path is "/"
+    assert SSHFileSystem._parent(path) == parent
+
+
+def test_relative_put_and_pipe(fs, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "local-source"
+    source.write_bytes(b"relative data")
+    fs.put_file(str(source), "remote-file")
+    assert (tmp_path / "remote-file").read_bytes() == b"relative data"
+    fs.pipe_file("piped-file", b"piped data")
+    assert (tmp_path / "piped-file").read_bytes() == b"piped data"
+
+
+@pytest.mark.parametrize("operation", ["copy", "checksum"])
+def test_bytes_shell_error_with_non_utf8_name(fs_bytes, tmp_path, operation):
+    path = os.fsencode(tmp_path) + b"/missing-caf\xe9"
+    with pytest.raises(FileNotFoundError):
+        if operation == "copy":
+            fs_bytes.cp_file(path, path + b"-copy")
+        else:
+            fs_bytes.checksum(path)
+    # The error must not close the connection
+    assert fs_bytes.ls(os.fsencode(tmp_path)) == []
+
+
+def test_bytes_relative_upload_and_download(fs_bytes, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "local-source"
+    source.write_bytes(b"relative data")
+    fs_bytes.put_file(str(source), b"remote-file")
+    assert fs_bytes.info(b"remote-file")["name"] == b"remote-file"
+    destination = tmp_path / "local-copy"
+    fs_bytes.get_file(b"remote-file", str(destination))
+    assert destination.read_bytes() == b"relative data"
+    fs_bytes.pipe_file(b"piped-file", b"piped data")
+    assert fs_bytes.cat_file(b"piped-file") == b"piped data"
+
+
+@pytest.mark.parametrize("operation", ["put", "pipe", "copy", "checksum"])
+def test_bytes_file_operations(fs_bytes, tmp_path, operation):
+    local = tmp_path / "source"
+    data = b"file data" * 10000
+    local.write_bytes(data)
+    destination = tmp_path / "nested" / "a file ' $name"
+    path = os.fsencode(destination)
+    if operation == "put":
+        fs_bytes.put_file(str(local), path)
+    elif operation == "pipe":
+        fs_bytes.pipe_file(path, data)
+    elif operation == "copy":
+        destination.parent.mkdir()
+        fs_bytes.cp_file(os.fsencode(local), path)
+    else:
+        assert (
+            fs_bytes.checksum(os.fsencode(local))
+            == hashlib.md5(data).hexdigest()
+        )
+        return
+    assert destination.read_bytes() == data
+
+
+@pytest.mark.parametrize("detail", [True, False])
+def test_bytes_ls_omits_dot_entries(fs_bytes, tmp_path, monkeypatch, detail):
+    (tmp_path / "data").write_bytes(b"data")
+    path = os.fsencode(tmp_path)
+    original = SFTPClient.readdir
+
+    async def readdir(channel, path):
+        entries = await original(channel, path)
+        attrs = await channel.stat(path)
+        return entries + [
+            SFTPName(name, attrs=attrs) for name in (b"", b".", b"..")
+        ]
+
+    monkeypatch.setattr(SFTPClient, "readdir", readdir)
+    listing = fs_bytes.ls(path, detail=detail)
+    names = [info["name"] for info in listing] if detail else listing
+    assert names == [path + b"/data"]
 
 
 def test_info(fs, remote_dir, plain_remote_dir):

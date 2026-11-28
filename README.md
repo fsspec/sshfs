@@ -58,6 +58,14 @@ fs = SSHFileSystem(
 
 Note: you can also pass `client_keys` as an argument to `fsspec.open`.
 
+For servers with file names that aren't valid UTF-8, set
+`sftp_client_kwargs={"path_encoding": None}` and pass remote paths as bytes.
+These methods accept bytes paths: `info`, `exists`, `isdir`, `isfile`, `size`,
+`modified`, `ls`, `open`, `cat_file`, `pipe_file`, `put_file`, `get_file`,
+`cp_file`, `mv`, `mkdir`, `makedirs`, `rm`, `rm_file`, and `checksum`.
+fsspec's generic methods, such as `walk`, `find`, `glob`, `cat`, `pipe`,
+`get`, `put`, and `copy`, need str paths.
+
 All operations and their descriptions are specified [here](https://filesystem-spec.readthedocs.io/en/latest/api.html#fsspec.spec.AbstractFileSystem).
 Here are a few example calls you can make, starting with `info()` which allows you to retrieve the metadata about given path;
 
