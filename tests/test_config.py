@@ -1,3 +1,4 @@
+import shlex
 import textwrap
 
 from sshfs.config import parse_config
@@ -45,4 +46,8 @@ def test_config_expansions(tmpdir):
         ProxyCommand ssh proxy nc %h %p
     """,
     )
-    assert config.get("ProxyCommand") == "ssh proxy nc base.dvc.org 222"
+    proxy_command = config.get("ProxyCommand")
+    # asyncssh >= 2.24.2 returns the command split into arguments
+    if isinstance(proxy_command, str):
+        proxy_command = shlex.split(proxy_command)
+    assert proxy_command == ["ssh", "proxy", "nc", "base.dvc.org", "222"]
