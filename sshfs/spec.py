@@ -1,7 +1,5 @@
 import asyncio
-import hashlib
 import posixpath
-import shlex
 import stat
 import weakref
 from contextlib import AsyncExitStack, suppress
@@ -33,6 +31,17 @@ async_methods.append("_mv")
 # and the rest (generally 8) for SFTP.
 _SHELL_CHANNELS = 2
 _DEFAULT_MAX_SESSIONS = 10
+
+
+def _sep(path):
+    return b"/" if isinstance(path, bytes) else "/"
+
+
+def _quote(path):
+    """Quote a str or bytes path for a POSIX shell, as bytes."""
+    if isinstance(path, str):
+        path = path.encode()
+    return b"'" + path.replace(b"'", b"'\\''") + b"'"
 
 
 class SSHFileSystem(AsyncFileSystem):
@@ -132,11 +141,7 @@ class SSHFileSystem(AsyncFileSystem):
     @classmethod
     def _parent(cls, path):
         path = cls._strip_protocol(path)
-        if isinstance(path, bytes):
-            return posixpath.dirname(path.rstrip(b"/")) or (
-                b"/" if path.startswith(b"/") else b""
-            )
-        return super()._parent(path)
+        return posixpath.dirname(path.rstrip(_sep(path)) or path)
 
     @wrap_exceptions
     async def _connect(
@@ -225,10 +230,10 @@ class SSHFileSystem(AsyncFileSystem):
             attributes = await channel.stat(path)
 
         info = self._decode_attributes(attributes)
-        separator = b"/" if isinstance(path, bytes) else "/"
-        path = path.rstrip(separator)
+        sep = _sep(path)
+        path = path.rstrip(sep)
         if info["type"] == "directory":
-            path += separator
+            path += sep
         info["name"] = path
         return info
 
@@ -265,8 +270,7 @@ class SSHFileSystem(AsyncFileSystem):
         **kwargs,
     ):
         rpath = self._strip_protocol(rpath)
-        parent = self._parent(rpath)
-        if parent:
+        if parent := self._parent(rpath):
             await self._makedirs(parent, exist_ok=True)
         async with self._pool.get() as channel:
             await channel.put(
@@ -293,12 +297,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _cp_file(self, lpath, rpath, **kwargs):
         lpath = self._strip_protocol(lpath)
         rpath = self._strip_protocol(rpath)
-        if isinstance(lpath, bytes) or isinstance(rpath, bytes):
-            async with self._pool.get() as channel:
-                await channel.copy(lpath, rpath, follow_symlinks=True)
-            return
-        cmd = f"cp {shlex.quote(lpath)} {shlex.quote(rpath)}"
-        await self._execute(cmd)
+        await self._execute_with_paths(b"cp %s %s", lpath, rpath)
 
     @wrap_exceptions
     async def _ls(self, path, detail=True, **kwargs):
@@ -386,25 +385,17 @@ class SSHFileSystem(AsyncFileSystem):
     @wrap_exceptions
     async def _checksum(self, path):
         path = self._strip_protocol(path)
-        if isinstance(path, bytes):
-            digest = hashlib.md5(usedforsecurity=False)
-            async with self._pool.get() as channel:
-                async with channel.open(path, "rb") as file:
-                    while chunk := await file.read(READ_BLOCK_SIZE):
-                        digest.update(chunk)
-            return digest.hexdigest()
         system = await self._get_system()
         if system == "Linux":
-            command = "md5sum"
+            command = b"md5sum %s"
             part = 0
         elif system == "Darwin":
-            command = "md5"
+            command = b"md5 %s"
             part = -1
         else:
             raise ValueError(f"{system!r} doesn't support checksum operation")
 
-        cmd = f"{command} {shlex.quote(path)}"
-        result = await self._execute(cmd)
+        result = await self._execute_with_paths(command, path)
 
         parts = result.stdout.strip().split()
         assert len(parts) >= 1
@@ -430,6 +421,13 @@ class SSHFileSystem(AsyncFileSystem):
 
     execute = sync_wrapper(_execute)
 
+    async def _execute_with_paths(self, command, *paths):
+        """Execute a shell command with str or bytes paths quoted into it."""
+        command %= tuple(map(_quote, paths))
+        # Output can include file names that aren't valid UTF-8, and
+        # failing to decode it strictly closes the SSH connection.
+        return await self._execute(command, errors="replace")
+
     def _open(self, path, *args, **kwargs):
         path = self._strip_protocol(path)
         return SSHFile(self, path, *args, **kwargs)
@@ -446,8 +444,7 @@ class SSHFileSystem(AsyncFileSystem):
     async def _pipe_file(self, path, data, chunksize=50 * 2**20, **kwargs):
         """Asynchronously writes the given data to a remote file in chunks."""
         path = self._strip_protocol(path)
-        parent = self._parent(path)
-        if parent:
+        if parent := self._parent(path):
             await self._makedirs(parent, exist_ok=True)
 
         async with self._pool.get() as channel:

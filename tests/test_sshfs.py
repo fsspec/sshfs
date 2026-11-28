@@ -191,6 +191,48 @@ def test_bytes_metadata_and_remove(fs_bytes, tmp_path):
     assert not directory.exists()
 
 
+@pytest.mark.parametrize(
+    "path, parent",
+    [
+        ("ssh://host/a/b", "/a"),
+        ("/a", "/"),
+        ("/", "/"),
+        ("a/b", "a"),
+        ("a", ""),
+        (b"/a/b/", b"/a"),
+        (b"/a", b"/"),
+        (b"/", b"/"),
+        (b"a/b", b"a"),
+        (b"a", b""),
+    ],
+)
+def test_parent(path, parent):
+    # "" is the home directory, so the parent of a top-level path is "/"
+    assert SSHFileSystem._parent(path) == parent
+
+
+def test_relative_put_and_pipe(fs, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "local-source"
+    source.write_bytes(b"relative data")
+    fs.put_file(str(source), "remote-file")
+    assert (tmp_path / "remote-file").read_bytes() == b"relative data"
+    fs.pipe_file("piped-file", b"piped data")
+    assert (tmp_path / "piped-file").read_bytes() == b"piped data"
+
+
+@pytest.mark.parametrize("operation", ["copy", "checksum"])
+def test_bytes_shell_error_with_non_utf8_name(fs_bytes, tmp_path, operation):
+    path = os.fsencode(tmp_path) + b"/missing-caf\xe9"
+    with pytest.raises(FileNotFoundError):
+        if operation == "copy":
+            fs_bytes.cp_file(path, path + b"-copy")
+        else:
+            fs_bytes.checksum(path)
+    # The error must not close the connection
+    assert fs_bytes.ls(os.fsencode(tmp_path)) == []
+
+
 def test_bytes_relative_upload_and_download(fs_bytes, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     source = tmp_path / "local-source"
